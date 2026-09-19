@@ -32,6 +32,9 @@ export function createAgentState(id, name, kind) {
     id, name, kind, phase: 'starting', connected: false, model: null, thinking: 'off',
     models: [], levels: ['off'], messages: [], queue: { steering: [], followUp: [] },
     stats: null, error: null, notice: '', sessionId: null, revision: 0, trimmed: false,
+    sessionName: name, cwd: '', startedAt: Date.now(), lastActivityAt: null,
+    currentTool: null, activity: [], activityMode: 'idle', currentUsage: null, availableTools: null, activeTools: null, extensionStatus: null,
+    ...(kind === 'main' ? { delegations: [], delegationStatus: { available: false, message: 'Discovering delegation telemetry.', omitted: 0 } } : {}),
   };
 }
 
@@ -44,8 +47,25 @@ export class AgentReducer {
   reset() {
     this.state.messages = []; this.state.queue = { steering: [], followUp: [] };
     this.state.error = null; this.state.notice = ''; this.state.stats = null;
-    this.state.phase = 'idle'; this.assistant = null; this.blocks = [];
-    this.state.trimmed = false; this.state.revision++;
+    this.state.phase = 'idle'; this.state.activityMode = 'idle'; this.assistant = null; this.blocks = [];
+    this.state.trimmed = false; this.state.currentTool = null; this.state.currentUsage = null;
+    this.state.activity = []; this.state.lastActivityAt = null; this.state.revision++;
+  }
+  hydrate(messages) {
+    this.reset();
+    for (const message of messages) {
+      if (['user', 'assistant', 'custom'].includes(message.role)) this.apply({ type: 'message_start', message });
+      if (message.role === 'assistant') {
+        this.apply({ type: 'message_end', message });
+        for (const call of (message.content ?? []).filter((b) => b.type === 'toolCall')) this.apply({ type: 'tool_execution_start', toolCallId: call.id, toolName: call.name, args: call.arguments });
+      } else if (message.role === 'toolResult') this.apply({ type: 'tool_execution_end', toolCallId: message.toolCallId, toolName: message.toolName, result: message, isError: message.isError });
+      else if (message.role === 'bashExecution') this.add({ role: 'tool', name: 'bash', args: clip(message.command), text: clip(message.output), status: message.cancelled ? 'cancelled' : message.exitCode ? 'error' : 'done', at: message.timestamp });
+      else if (['compactionSummary', 'branchSummary'].includes(message.role)) this.add({ role: 'assistant', text: clip(message.summary), status: 'done', at: message.timestamp });
+    }
+    for (const message of this.state.messages) if (message.role === 'tool' && message.status === 'running') message.status = 'interrupted';
+    this.state.phase = 'idle'; this.state.activityMode = 'idle'; this.state.currentTool = null; this.state.currentUsage = null;
+    this.state.activity = []; this.state.lastActivityAt = messages.at(-1)?.timestamp ?? null;
+    this.state.revision++;
   }
   tool(id, name) {
     return this.state.messages.find((message) => message.id === `tool:${id}`)
@@ -53,16 +73,30 @@ export class AgentReducer {
   }
   apply(event) {
     const state = this.state;
+    const labels = { agent_start: 'Run started', agent_settled: 'Run settled', turn_start: 'Assistant turn started',
+      tool_execution_start: `Tool started: ${clip(event.toolName, 80)}`, tool_execution_end: `Tool ${event.isError ? 'failed' : 'finished'}: ${clip(event.toolName, 80)}`,
+      auto_retry_start: 'Provider retry scheduled', auto_retry_end: 'Provider retry finished',
+      compaction_start: 'Context compaction started', compaction_end: 'Context compaction ended', queue_update: 'Message queue updated' };
+    state.lastActivityAt = Date.now();
+    if (labels[event.type]) {
+      state.activity.push({ id: `a${++this.serial}`, at: state.lastActivityAt, type: event.type, label: labels[event.type] });
+      state.activity = state.activity.slice(-80);
+    }
     switch (event.type) {
-      case 'agent_start': state.phase = 'running'; state.error = null; break;
+      case 'turn_start': state.activityMode = state.currentTool ? 'tool' : 'idle'; break;
+      case 'agent_start': state.phase = 'running'; state.activityMode = 'idle'; state.error = null; state.startedAt = Date.now(); break;
       // agent_end is NOT terminal: retries and queued continuations may follow it.
-      case 'agent_settled': state.phase = 'idle'; break;
-      case 'auto_retry_start': state.phase = 'retrying'; state.notice = `Retry ${event.attempt}/${event.maxAttempts}`; break;
+      case 'agent_settled':
+        state.phase = 'idle'; state.activityMode = 'idle'; state.currentTool = null; state.currentUsage = null;
+        for (const message of state.messages) if (message.role === 'tool' && message.status === 'running') message.status = 'interrupted';
+        break;
+      case 'auto_retry_start': state.phase = 'retrying'; state.activityMode = 'idle'; state.notice = `Retry ${event.attempt}/${event.maxAttempts}`; break;
       case 'auto_retry_end':
         if (!event.success) state.error = clip(event.finalError);
         state.notice = ''; break;
-      case 'compaction_start': state.phase = 'compacting'; break;
+      case 'compaction_start': state.phase = 'compacting'; state.activityMode = 'tool'; break;
       case 'compaction_end':
+        state.activityMode = 'idle';
         state.notice = event.aborted ? 'Compaction cancelled' : event.errorMessage ? 'Compaction failed' : 'Context compacted';
         if (event.errorMessage) state.error = clip(event.errorMessage);
         if (event.reason === 'manual') state.phase = event.willRetry ? 'running' : 'idle';
@@ -70,14 +104,21 @@ export class AgentReducer {
       case 'queue_update':
         state.queue = { steering: (event.steering ?? []).map((x) => clip(x)), followUp: (event.followUp ?? []).map((x) => clip(x)) }; break;
       case 'message_start': {
-        if (event.message.role === 'user') this.add({ role: 'user', text: clip(contentText(event.message.content)), status: 'done' });
+        if (event.message.role === 'custom' && event.message.display === true) this.add({ role: 'extension', text: clip(contentText(event.message.content)), status: 'done', at: event.message.timestamp ?? Date.now() });
+        if (event.message.role === 'user') this.add({ role: 'user', text: clip(contentText(event.message.content)), status: 'done', at: event.message.timestamp ?? Date.now() });
         if (event.message.role === 'assistant') {
           this.blocks = [];
-          this.assistant = this.add({ role: 'assistant', text: '', thinking: '', status: 'streaming' });
+          state.currentUsage = null;
+          this.assistant = this.add({ role: 'assistant', text: '', thinking: '', status: 'streaming', at: event.message.timestamp ?? Date.now() });
         }
         break;
       }
       case 'message_update': {
+        const activity = event.assistantMessageEvent?.type;
+        if (/^thinking_(start|delta|end)$/.test(activity)) state.activityMode = 'thinking';
+        else if (/^text_(start|delta|end)$/.test(activity)) state.activityMode = 'output';
+        else if (/^toolcall_(start|delta|end)$/.test(activity)) state.activityMode = 'tool';
+        if (event.usage) state.currentUsage = event.usage;
         if (!this.assistant) break;
         const delta = event.assistantMessageEvent;
         if (!delta || !/^(text|thinking)_(start|delta|end)$/.test(delta.type)) break;
@@ -95,6 +136,7 @@ export class AgentReducer {
       case 'message_end': {
         const message = event.message;
         if (message.role !== 'assistant') break;
+        state.activityMode = state.currentTool ? 'tool' : 'idle';
         const target = this.assistant ?? this.add({ role: 'assistant' });
         target.text = clip(contentText(message.content));
         target.thinking = clip((message.content ?? []).filter((b) => b.type === 'thinking').map((b) => b.thinking).join('\n'));
@@ -103,16 +145,20 @@ export class AgentReducer {
         this.assistant = null; this.blocks = []; break;
       }
       case 'tool_execution_start': {
+        state.activityMode = 'tool';
         const tool = this.tool(event.toolCallId, event.toolName);
-        tool.args = clip(JSON.stringify(event.args, null, 2), 8_000); break;
+        tool.args = clip(JSON.stringify(event.args, null, 2), 8_000); state.currentTool = event.toolName; break;
       }
       case 'tool_execution_update':
+        state.activityMode = 'tool';
         // partialResult is cumulative, not a delta.
         this.tool(event.toolCallId, event.toolName).text = clip(contentText(event.partialResult?.content)); break;
       case 'tool_execution_end': {
         const tool = this.tool(event.toolCallId, event.toolName);
         tool.text = clip(contentText(event.result?.content));
         tool.status = event.isError ? 'error' : 'done';
+        state.currentTool = state.messages.find((m) => m.role === 'tool' && m.status === 'running')?.name ?? null;
+        state.activityMode = state.currentTool ? 'tool' : 'idle';
         if (event.result?.details?.patch) tool.patch = clip(event.result.details.patch);
         break;
       }

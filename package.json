@@ -1,8 +1,9 @@
 {
-  "name": "@joeyzhuoer/pi-terminal-ui",
-  "version": "0.2.0",
+  "name": "@joeyzhuoer/pi-dither",
+  "version": "0.4.0",
   "private": true,
-  "description": "A retro windowed desktop and terminal presentation layer for core Pi",
+  "description": "A dithered native macOS workspace for core Pi, with preserved web and terminal interfaces",
+  "repository": { "type": "git", "url": "https://github.com/JoeyZhuoer/pi-dither.git" },
   "type": "module",
   "keywords": ["pi-package"],
   "engines": { "node": ">=22.19.0" },
@@ -17,8 +18,12 @@
   "scripts": {
     "start": "node scripts/launch.mjs",
     "desktop": "node desktop/server.mjs --open",
+    "app:build": "node scripts/build-macos.mjs",
+    "app": "open \"dist/Pi Dither.app\"",
+    "test:macos": "node tests/macos-smoke.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:desktop": "node --test tests/desktop.test.mjs",
+    "test:desktop": "node --test tests/desktop.test.mjs tests/controls.test.mjs tests/control-races.test.mjs tests/markdown.test.mjs tests/windows.test.mjs tests/features.test.mjs tests/tools.test.mjs tests/subagent-slots.test.mjs tests/backdrop.test.mjs tests/extensions.test.mjs tests/delegations.test.mjs tests/delegation-live.test.mjs tests/delegated.test.mjs",
+    "test:browser": "node tests/browser-smoke.mjs",
     "test:terminal": "python3 tests/terminal-smoke.py"
   }
 }

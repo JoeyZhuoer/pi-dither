@@ -4,22 +4,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#e58da5">
-  <title>Pi Desktop / Local intelligence</title>
+  <title>Pi Dither / Local intelligence</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/markdown.css">
+  <link rel="stylesheet" href="/features.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <canvas id="backdrop" aria-hidden="true"></canvas>
   <header class="desktop-menu">
-    <a class="wordmark" href="#" aria-label="Pi Desktop">PI.OS.01</a>
+    <a class="wordmark" href="#" aria-label="Pi Dither">PI.DITHER</a>
     <span class="menu-caption">A SMALL OPERATING SPACE FOR BIG IDEAS.</span>
     <nav aria-label="Desktop controls">
+      <button id="window-menu-toggle" aria-expanded="false" aria-controls="window-menu">Windows ▾</button>
       <button id="add-agent">+ Subagent</button>
       <button id="arrange">Arrange</button>
       <button id="help">?</button>
     </nav>
   </header>
+  <nav id="window-menu" class="window-menu" aria-label="Feature windows" hidden>
+    <button data-feature="models">Models &amp; reasoning</button>
+    <button data-feature="providers">Providers</button>
+    <button data-feature="workspace">Workspace</button>
+    <button data-feature="git">Git &amp; worktrees</button>
+    <button data-feature="usage">Session usage</button>
+    <button data-feature="sessions">Sessions</button>
+    <button data-feature="activity">Running activity</button>
+    <button data-feature="tools">Tools</button>
+  </nav>
   <div id="connection" role="status">CONNECTING TO LOCAL PI…</div>
   <main id="desktop" aria-label="Agent desktop"></main>
   <aside class="clock-widget" aria-label="Local clock">
@@ -28,25 +41,28 @@
     <div class="clock-line"><time id="clock"></time><span class="clock-mark" aria-hidden="true">▪ · ▪</span></div>
   </aside>
   <aside class="about-widget">
-    <div class="utility-title">Pi Desktop <span>0.2</span></div>
+    <div class="utility-title">Pi Dither <span>0.4</span></div>
     <div class="about-content"><span class="pi-glyph" aria-hidden="true">π</span><p>Local tools. Open-ended thought.<br>One main thread. Room for others.</p></div>
   </aside>
-  <aside class="life-widget" aria-label="Decorative Game of Life pattern">
-    <div class="utility-title">Glider 1.1</div>
-    <div class="life-grid" aria-hidden="true"><i></i><i class="alive"></i><i></i><i></i><i></i><i class="alive"></i><i class="alive"></i><i class="alive"></i><i class="alive"></i></div>
-    <span>Game of Life / ambient</span>
-  </aside>
+  <aside id="usage-diagram" class="usage-widget" aria-label="Selected agent usage"></aside>
   <footer class="taskbar"><span class="taskbar-label">WINDOWS /</span><div id="tasks"></div><span id="fleet-count">0 ACTIVE</span></footer>
   <div id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="help-dialog">
     <div class="utility-title">Desktop / Field guide</div>
     <div class="help-body">
       <h2>Your main agent gets the big window.</h2>
-      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Arrange restores the composition.</p>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Selecting a compact/default window via its title bar, menu or taskbar enlarges it once. Your adjusted size and position are remembered when hiding, showing or reloading. Use ↗ to zoom again; Arrange resets the layout.</p>
+      <p>The desktop usage chart follows the selected agent: input, output, cache, reported cost and context occupancy. Click its heading for details. Unknown usage is shown as —; provisional turn usage is not added to session totals.</p>
       <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
-      <p><strong>Subagents run only when you press Launch.</strong> They are separate core Pi sessions with read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
-      <p>The main agent retains Pi's filesystem and shell tools. This local interface is not a sandbox. Model requests use your configured Pi provider. Authentication stays on the server.</p>
-      <p>This release does not attach to existing terminal or pi-subagents runs. Terminal-only commands, session-tree editing, and arbitrary extensions remain available in the terminal app.</p>
+      <p><strong>No empty subagent windows are created at startup.</strong> Use + Subagent to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
+      <p>The main agent defaults to Pi's filesystem and shell tools. This local interface is not a sandbox. Model requests use your configured Pi provider. Authentication stays on the server.</p>
+      <p>Use <strong>Windows</strong> for models, providers, workspace, Git/worktrees, usage, saved desktop sessions, activity, and per-agent tools. Closing a feature window hides it. Minimizing an agent never stops its work.</p>
+      <p>Provider key overrides last only for this server lifetime. Archive hides a saved session without deleting it. Workspace/session/provider changes require idle agents.</p>
+      <p>This release does not attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom providers, session-tree editing, images and arbitrary extensions remain terminal features.</p>
+      <p>The main agent loads the installed pi-subagents extension. Its delegated agents follow their configured permissions. Automatic DELEGATED observer windows appear on the right in the former Scout/Review positions and show their available live output and results without launching extra agents. Closing an observer only dismisses the view; use the extension to stop its task. Minimize keeps it in the taskbar. Tools shows extension availability; restart the server after updating it.</p>
+      <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; manual desktop subagents can only select from their read-only catalog.</p>
+      <p>Window types have distinct size presets; your manual layout wins. The background keeps its original idle pattern, with different thinking/busy and output patterns. Reduced motion, hidden tabs and manual pause always take priority.</p>
+      <button id="background-motion" type="button" aria-pressed="false">Pause background motion</button>
       <form method="dialog"><button class="primary">Understood</button></form>
     </div>
   </dialog>
