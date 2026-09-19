@@ -1,0 +1,131 @@
+export const TEXT_LIMIT = 64_000;
+export const clip = (value, limit = TEXT_LIMIT) => {
+  const text = String(value ?? '');
+  return text.length > limit ? text.slice(0, limit) + '\n[Display truncated; full output remains in the Pi session.]' : text;
+};
+export const contentText = (content) => typeof content === 'string' ? content
+  : (content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('\n');
+export const safeModel = (model) => model ? {
+  id: model.id, provider: model.provider, name: model.name ?? model.id,
+  reasoning: !!model.reasoning, contextWindow: model.contextWindow,
+} : null;
+
+// RPC is strictly LF-delimited JSON, not Unicode-line-delimited text.
+export class JsonLines {
+  buffer = '';
+  push(chunk) {
+    this.buffer += chunk;
+    if (this.buffer.length > 8_000_000) throw new Error('Pi RPC frame exceeds the safety limit');
+    const frames = [];
+    let index;
+    while ((index = this.buffer.indexOf('\n')) >= 0) {
+      const line = this.buffer.slice(0, index).replace(/\r$/, '');
+      this.buffer = this.buffer.slice(index + 1);
+      if (line.trim()) frames.push(JSON.parse(line));
+    }
+    return frames;
+  }
+}
+
+export function createAgentState(id, name, kind) {
+  return {
+    id, name, kind, phase: 'starting', connected: false, model: null, thinking: 'off',
+    models: [], levels: ['off'], messages: [], queue: { steering: [], followUp: [] },
+    stats: null, error: null, notice: '', sessionId: null, revision: 0, trimmed: false,
+  };
+}
+
+export class AgentReducer {
+  constructor(state) { this.state = state; this.serial = 0; this.assistant = null; this.blocks = []; }
+  add(message) {
+    this.state.messages.push({ id: `m${++this.serial}`, at: Date.now(), ...message });
+    return this.state.messages.at(-1);
+  }
+  reset() {
+    this.state.messages = []; this.state.queue = { steering: [], followUp: [] };
+    this.state.error = null; this.state.notice = ''; this.state.stats = null;
+    this.state.phase = 'idle'; this.assistant = null; this.blocks = [];
+    this.state.trimmed = false; this.state.revision++;
+  }
+  tool(id, name) {
+    return this.state.messages.find((message) => message.id === `tool:${id}`)
+      ?? this.add({ id: `tool:${id}`, role: 'tool', name, args: '', text: '', status: 'running' });
+  }
+  apply(event) {
+    const state = this.state;
+    switch (event.type) {
+      case 'agent_start': state.phase = 'running'; state.error = null; break;
+      // agent_end is NOT terminal: retries and queued continuations may follow it.
+      case 'agent_settled': state.phase = 'idle'; break;
+      case 'auto_retry_start': state.phase = 'retrying'; state.notice = `Retry ${event.attempt}/${event.maxAttempts}`; break;
+      case 'auto_retry_end':
+        if (!event.success) state.error = clip(event.finalError);
+        state.notice = ''; break;
+      case 'compaction_start': state.phase = 'compacting'; break;
+      case 'compaction_end':
+        state.notice = event.aborted ? 'Compaction cancelled' : event.errorMessage ? 'Compaction failed' : 'Context compacted';
+        if (event.errorMessage) state.error = clip(event.errorMessage);
+        if (event.reason === 'manual') state.phase = event.willRetry ? 'running' : 'idle';
+        break;
+      case 'queue_update':
+        state.queue = { steering: (event.steering ?? []).map((x) => clip(x)), followUp: (event.followUp ?? []).map((x) => clip(x)) }; break;
+      case 'message_start': {
+        if (event.message.role === 'user') this.add({ role: 'user', text: clip(contentText(event.message.content)), status: 'done' });
+        if (event.message.role === 'assistant') {
+          this.blocks = [];
+          this.assistant = this.add({ role: 'assistant', text: '', thinking: '', status: 'streaming' });
+        }
+        break;
+      }
+      case 'message_update': {
+        if (!this.assistant) break;
+        const delta = event.assistantMessageEvent;
+        if (!delta || !/^(text|thinking)_(start|delta|end)$/.test(delta.type)) break;
+        const index = delta.contentIndex;
+        if (!Number.isInteger(index) || index < 0 || index > 1024) break;
+        const type = delta.type.startsWith('text') ? 'text' : 'thinking';
+        const block = this.blocks[index] ??= { type, text: '' };
+        if (delta.type.endsWith('_delta')) block.text = clip(block.text + (delta.delta ?? ''));
+        if (delta.type.endsWith('_end') && typeof delta.content === 'string') block.text = clip(delta.content);
+        for (const field of ['text', 'thinking']) {
+          this.assistant[field] = clip(this.blocks.filter((b) => b?.type === field).map((b) => b.text).join('\n'));
+        }
+        break;
+      }
+      case 'message_end': {
+        const message = event.message;
+        if (message.role !== 'assistant') break;
+        const target = this.assistant ?? this.add({ role: 'assistant' });
+        target.text = clip(contentText(message.content));
+        target.thinking = clip((message.content ?? []).filter((b) => b.type === 'thinking').map((b) => b.thinking).join('\n'));
+        target.status = message.stopReason === 'aborted' ? 'cancelled' : message.stopReason === 'error' ? 'error' : 'done';
+        if (message.errorMessage) { target.text ||= clip(message.errorMessage); state.error = clip(message.errorMessage); }
+        this.assistant = null; this.blocks = []; break;
+      }
+      case 'tool_execution_start': {
+        const tool = this.tool(event.toolCallId, event.toolName);
+        tool.args = clip(JSON.stringify(event.args, null, 2), 8_000); break;
+      }
+      case 'tool_execution_update':
+        // partialResult is cumulative, not a delta.
+        this.tool(event.toolCallId, event.toolName).text = clip(contentText(event.partialResult?.content)); break;
+      case 'tool_execution_end': {
+        const tool = this.tool(event.toolCallId, event.toolName);
+        tool.text = clip(contentText(event.result?.content));
+        tool.status = event.isError ? 'error' : 'done';
+        if (event.result?.details?.patch) tool.patch = clip(event.result.details.patch);
+        break;
+      }
+      case 'extension_error': state.error = clip(event.error); break;
+      default: return false;
+    }
+    let bytes = state.messages.reduce((total, message) => total + (message.text?.length ?? 0) + (message.thinking?.length ?? 0), 0);
+    while (state.messages.length > 160 || (bytes > 1_000_000 && state.messages.length > 1)) {
+      const removed = state.messages.shift();
+      bytes -= (removed.text?.length ?? 0) + (removed.thinking?.length ?? 0);
+      state.trimmed = true;
+    }
+    state.revision++;
+    return true;
+  }
+}

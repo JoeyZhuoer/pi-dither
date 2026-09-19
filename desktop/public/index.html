@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#e58da5">
+  <title>Pi Desktop / Local intelligence</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <canvas id="backdrop" aria-hidden="true"></canvas>
+  <header class="desktop-menu">
+    <a class="wordmark" href="#" aria-label="Pi Desktop">PI.OS.01</a>
+    <span class="menu-caption">A SMALL OPERATING SPACE FOR BIG IDEAS.</span>
+    <nav aria-label="Desktop controls">
+      <button id="add-agent">+ Subagent</button>
+      <button id="arrange">Arrange</button>
+      <button id="help">?</button>
+    </nav>
+  </header>
+  <div id="connection" role="status">CONNECTING TO LOCAL PI…</div>
+  <main id="desktop" aria-label="Agent desktop"></main>
+  <aside class="clock-widget" aria-label="Local clock">
+    <div class="utility-title">Clock Tool 1.1 <span>LOCAL</span></div>
+    <div id="date"></div>
+    <div class="clock-line"><time id="clock"></time><span class="clock-mark" aria-hidden="true">▪ · ▪</span></div>
+  </aside>
+  <aside class="about-widget">
+    <div class="utility-title">Pi Desktop <span>0.2</span></div>
+    <div class="about-content"><span class="pi-glyph" aria-hidden="true">π</span><p>Local tools. Open-ended thought.<br>One main thread. Room for others.</p></div>
+  </aside>
+  <aside class="life-widget" aria-label="Decorative Game of Life pattern">
+    <div class="utility-title">Glider 1.1</div>
+    <div class="life-grid" aria-hidden="true"><i></i><i class="alive"></i><i></i><i></i><i></i><i class="alive"></i><i class="alive"></i><i class="alive"></i><i class="alive"></i></div>
+    <span>Game of Life / ambient</span>
+  </aside>
+  <footer class="taskbar"><span class="taskbar-label">WINDOWS /</span><div id="tasks"></div><span id="fleet-count">0 ACTIVE</span></footer>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="help-dialog">
+    <div class="utility-title">Desktop / Field guide</div>
+    <div class="help-body">
+      <h2>Your main agent gets the big window.</h2>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Arrange restores the composition.</p>
+      <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
+      <p><strong>Subagents run only when you press Launch.</strong> They are separate core Pi sessions with read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
+      <p>The main agent retains Pi's filesystem and shell tools. This local interface is not a sandbox. Model requests use your configured Pi provider. Authentication stays on the server.</p>
+      <p>This release does not attach to existing terminal or pi-subagents runs. Terminal-only commands, session-tree editing, and arbitrary extensions remain available in the terminal app.</p>
+      <form method="dialog"><button class="primary">Understood</button></form>
+    </div>
+  </dialog>
+</body>
+</html>
