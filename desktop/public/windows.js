@@ -22,9 +22,12 @@ const profiles = {
 const profileFor = (kind, id) => kind === 'delegated' ? [560, 430]
   : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660]) : null;
 // Minimum usable width/height per kind, shared by opening geometry and
-// viewport clamping so they cannot drift apart.
-const minimum = (kind) => kind === 'main' ? { w: 610, h: 440 }
+// viewport clamping so they cannot drift apart. Main can be dragged down to a
+// narrow column; children alone keep the main-relative cap.
+const minimum = (kind) => kind === 'main' ? { w: 360, h: 320 }
   : kind === 'subagent' ? { w: 270, h: 250 } : { w: 400, h: 320 };
+// Opening stays roomier than the floor so shrinking is always the user's choice.
+const openingWidth = (kind) => kind === 'main' ? 610 : minimum(kind).w;
 // Opening height as a fraction of the desktop; medium, not the full canvas.
 const MEDIUM_HEIGHT = .6;
 
@@ -280,7 +283,7 @@ export class DesktopWindows {
     const limits = minimum(win.kind);
     // Open at the minimum usable width with a medium height. Manual resizing
     // replaces these values for that window and keeps them (sizeMode manual).
-    const target = { w: Math.min(limits.w, Math.max(1, w - 8)), h: Math.max(limits.h, Math.round(h * MEDIUM_HEIGHT)) };
+    const target = { w: Math.min(openingWidth(win.kind), Math.max(1, w - 8)), h: Math.max(limits.h, Math.round(h * MEDIUM_HEIGHT)) };
     const child = win.kind === 'subagent' || win.kind === 'delegated';
     // Grow toward the left, keeping the right-side child anchors. Fit the
     // available height below each anchor rather than piling every child at top.

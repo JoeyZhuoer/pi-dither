@@ -365,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.window.setContentSize(size)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.runSmokeStage(name) }
             } else {
-                print("PASS: native feature checks — nine utilities, minimum-width/medium-height opening, native resize, manual layouts, maximize, draft controls, menus, background colour/photo dither, hide/reopen, Reload and unchanged conversation.")
+                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, background colour/photo dither, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

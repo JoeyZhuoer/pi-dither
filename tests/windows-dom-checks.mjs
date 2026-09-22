@@ -22,7 +22,13 @@ export async function checkWindowsDOM({ DesktopWindows }) {
       engine.resize(); assert(JSON.stringify(main.layoutRect) === preferred, 'mobile does not overwrite desktop preference');
       return 'mobile stacked layout preserves sizing preference';
     }
-    assert(main.sizeMode === 'auto' && main.rect.w === 610, 'main opens at the minimum width');
+    assert(main.sizeMode === 'auto' && main.rect.w === 610, 'main opens at its roomy width');
+    engine.place(main, { x: 20, y: 20, w: 380, h: 340 });
+    assert(main.rect.w === 380 && main.rect.h === 340, 'main shrinks below the old 610x440 floor');
+    engine.place(main, { x: 20, y: 20, w: 100, h: 100 });
+    assert(main.rect.w === 360 && main.rect.h === 320, 'main floor is 360x320');
+    engine.arrange(); main.task.click();
+    assert(main.rect.w === 610 && main.rect.h === 456, 'Arrange fits main back to its roomy opening size');
     assert(!main.element.querySelector('[aria-label="Zoom to working size"]'), 'no separate sizing button');
     const child = engine.add({ id: 'child', kind: 'subagent', title: 'Child' });
     const observer = engine.add({ id: 'observer', kind: 'delegated', title: 'Observer' });
@@ -60,7 +66,7 @@ export async function checkWindowsDOM({ DesktopWindows }) {
     const maximize = main.element.querySelector('[aria-label="Maximize or restore main window"]');
     maximize.click(); maximize.click(); assert(main.sizeMode === 'auto' && main.rect.w === beforeMax, 'maximize/restore preserves automatic intent');
     engine.arrange(); assert([...engine.windows.values()].every(win => win.sizeMode === 'compact'), 'Arrange resets sizing intent');
-    return 'minimum-width medium-height opening, purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation, maximize and Arrange passed';
+    return 'roomy opening with a narrow main floor, purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation, maximize and Arrange passed';
   } finally {
     engine.destroy(); desktop.remove(); tasks.remove();
     if (saved === null) localStorage.removeItem(key); else localStorage.setItem(key, saved);

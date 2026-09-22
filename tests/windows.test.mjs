@@ -296,7 +296,7 @@ test('Arrange restores automatic fitting on selection; manual overrides, maximiz
   button(main, 'Maximize or restore main window').emit('click'); assert.equal(main.restoreMode, 'auto');
   desktop.clientWidth = 1000; desktop.clientHeight = 700; browser.emit('resize');
   button(main, 'Maximize or restore main window').emit('click');
-  assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 610); assert.equal(main.rect.h, 440);
+  assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 610); assert.equal(main.rect.h, 420);
   manager.place(main, { x: 20, y: 30, w: 650, h: 480 }); manager.save();
   const preferred = { ...main.layoutRect }; desktop.clientWidth = 1400; browser.emit('resize');
   assert.deepEqual(main.rect, preferred); assert.equal(main.sizeMode, 'manual');
@@ -307,6 +307,31 @@ test('Arrange restores automatic fitting on selection; manual overrides, maximiz
   manager.arrange(); assert.equal(main.sizeMode, 'compact'); assert.equal(main.zoomed, false);
 });
 
+test('main shrinks to a narrow column while opening stays roomy', (t) => {
+  const { manager, desktop } = fixture(t);
+  const main = addMain(manager);
+  // Opening geometry is unchanged: main still opens at its roomier preset.
+  assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 610); assert.equal(main.rect.h, 540);
+  // The user can now drag/place it far below the old 610x440 floor.
+  manager.place(main, { x: 30, y: 40, w: 420, h: 380 });
+  assert.deepEqual(main.rect, { x: 30, y: 40, w: 420, h: 380 }); assert.equal(main.sizeMode, 'manual');
+  manager.place(main, { x: 30, y: 40, w: 120, h: 90 });
+  assert.equal(main.rect.w, 360); assert.equal(main.rect.h, 320, 'main floor is 360x320');
+  // Keyboard resize can go below the old floor too, and stays clamped at the new one.
+  main.element.querySelector('.resize-handle').emit('keydown', { key: 'ArrowLeft', shiftKey: true });
+  assert.equal(main.rect.w, 360);
+  // Children still stay bounded relative to the smaller main.
+  const child = manager.add({ id: 'child', title: 'Child' });
+  manager.place(child, { x: 0, y: 0, w: 4000, h: 4000 });
+  assert.ok(child.rect.w <= Math.min(460, main.rect.w - 140)); assert.ok(child.rect.h <= Math.min(510, main.rect.h - 100));
+  // Reload restores the narrow manual layout exactly.
+  manager.destroy(); desktop.clientWidth = 1400; desktop.clientHeight = 900;
+  const restored = new DesktopWindows(desktop, { append() {} });
+  const copy = restored.add({ id: 'main', title: 'Main', kind: 'main' });
+  assert.deepEqual(copy.rect, { x: 30, y: 40, w: 360, h: 320 }); assert.equal(copy.sizeMode, 'manual');
+  restored.destroy();
+});
+
 test('maximized auto-sized windows retain restore intent across reload', (t) => {
   const { manager, desktop, tasks } = fixture(t); const main = addMain(manager);
   manager.autoSize(main); button(main, 'Maximize or restore main window').emit('click');
@@ -314,7 +339,7 @@ test('maximized auto-sized windows retain restore intent across reload', (t) => 
   const next = new DesktopWindows(desktop, tasks), copy = addMain(next);
   assert.equal(copy.restoreMode, 'auto'); assert.ok(copy.restore);
   button(copy, 'Maximize or restore main window').emit('click');
-  assert.equal(copy.sizeMode, 'auto'); assert.equal(copy.rect.w, 610); assert.equal(copy.rect.h, 440);
+  assert.equal(copy.sizeMode, 'auto'); assert.equal(copy.rect.w, 610); assert.equal(copy.rect.h, 420);
   desktop.clientWidth = 1400; desktop.clientHeight = 900; next.resize(); assert.equal(copy.rect.w, 610); assert.equal(copy.rect.h, 540);
   next.destroy();
 });

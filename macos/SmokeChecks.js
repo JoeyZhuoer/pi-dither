@@ -109,6 +109,11 @@ async function piDitherSmoke(stage) {
     maximize.click(); maximize.click(); check(saved().main.sizeMode === 'auto', 'maximize/restore retains auto intent');
     main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     check(saved().main.sizeMode === 'manual', 'manual resize opts out');
+    // The narrower floor lets the user shrink main well below the old 610px.
+    for (let i = 0; i < 20; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    const narrowMain = parseFloat(main.style.width);
+    check(narrowMain <= 410 && narrowMain >= 360, `main shrinks below the old floor (${narrowMain}px)`);
+    check(main.querySelector('.send').getBoundingClientRect().bottom <= main.getBoundingClientRect().bottom + 1, 'narrow main keeps its composer reachable');
     nativeFeatureState.manual = saved().main.w;
   } else if (stage === 'manual-narrow') {
     await wait(() => innerWidth < 1000);
