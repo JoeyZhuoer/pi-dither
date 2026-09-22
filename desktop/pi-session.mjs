@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { AgentReducer, JsonLines, createAgentState, safeModel, clip } from './protocol.mjs';
 import { assertToolChangeReady, validateToolSelection } from './tools.mjs';
+import { stopInspection } from './inspection.mjs';
 import { sanitizeDelegations, safeDelegationText } from './delegations.mjs';
 
 export class PiSession extends EventEmitter {
@@ -12,7 +13,7 @@ export class PiSession extends EventEmitter {
     this.state = createAgentState(id, name, kind);
     this.state.cwd = cwd;
     this.secrets = Object.values(keys);
-    this.reducer = new AgentReducer(this.state);
+    this.reducer = new AgentReducer(this.state, (text) => this.redact(text));
     this.pending = new Map();
     this.toolPending = new Map();
     this.toolRevision = -1;
@@ -37,10 +38,11 @@ export class PiSession extends EventEmitter {
     this.child.on('message', (message) => { this.receiveTools(message); this.receiveDelegations(message); });
     this.child.on('disconnect', () => {
       this.rejectToolRequests('Pi tool channel disconnected');
-      this.disconnectDelegations(); this.state.activityMode = 'idle'; this.changed();
+      this.reducer.stopInspection(); this.disconnectDelegations(); this.state.activityMode = 'idle'; this.changed();
     });
     this.child.on('exit', (code, signal) => {
       clearTimeout(this.killTimer);
+      this.reducer.stopInspection();
       this.state.connected = false; this.state.currentTool = null; this.state.currentUsage = null; this.state.activityMode = 'idle';
       this.disconnectDelegations();
       for (const message of this.state.messages) if (message.role === 'tool' && message.status === 'running') message.status = 'interrupted';
@@ -63,7 +65,7 @@ export class PiSession extends EventEmitter {
     for (const key of this.secrets) if (key) text = text.split(key).join('[redacted]');
     return text;
   }
-  fail(message) { this.state.phase = 'error'; this.state.activityMode = 'idle'; this.state.error = clip(this.redact(message), 4000); this.changed(); }
+  fail(message) { this.reducer?.stopInspection(); this.state.phase = 'error'; this.state.activityMode = 'idle'; this.state.error = clip(this.redact(message), 4000); this.changed(); }
   receiveDelegations(message) {
     if (this.closed || this.state.kind !== 'main' || message?.type !== 'desktop_delegations'
       || typeof message.sessionId !== 'string' || !Number.isSafeInteger(message.generation) || !Number.isSafeInteger(message.sequence)) return;
@@ -88,13 +90,14 @@ export class PiSession extends EventEmitter {
     this.delegationSnapshot = null;
     if (this.state.kind !== 'main') return;
     this.state.delegations = (this.state.delegations ?? []).map((row) => ['queued', 'running'].includes(row.status)
-      ? { ...row, status: 'unknown', phase: 'idle' } : { ...row, phase: 'idle' });
+      ? { ...row, status: 'unknown', phase: 'idle', inspection: stopInspection(row.inspection) } : { ...row, phase: 'idle', inspection: stopInspection(row.inspection) });
     this.state.delegationStatus = { available: false, message: 'Delegation telemetry disconnected.', omitted: this.state.delegationStatus?.omitted ?? 0 };
   }
   capture(state, stats) {
     this.sessionFile = state.sessionFile;
     if (this.state.sessionId !== state.sessionId) {
       this.state.activityMode = 'idle';
+      if (this.state.sessionId !== null) this.reducer?.reset();
       if (this.state.kind === 'main') {
         this.state.delegations = []; this.state.delegationStatus = { available: false, message: 'Discovering delegation telemetry.', omitted: 0 };
       }
@@ -102,6 +105,7 @@ export class PiSession extends EventEmitter {
     this.state.sessionId = state.sessionId;
     this.captureDelegations();
     this.state.sessionName = state.sessionName || this.state.name;
+    this.reducer?.captureInspectionStats(stats);
     this.state.stats = { tokens: stats.tokens, cost: stats.cost, contextUsage: stats.contextUsage,
       userMessages: stats.userMessages, assistantMessages: stats.assistantMessages, toolCalls: stats.toolCalls,
       totalMessages: stats.totalMessages, updatedAt: Date.now() };
@@ -275,8 +279,10 @@ export class PiSession extends EventEmitter {
         this.metadataGeneration++;
         const result = await this.command('clone');
         if (result.cancelled) throw new Error('Clone was cancelled');
+        await this.refresh();
+        const stats = this.state.stats;
         this.reducer.hydrate((await this.command('get_messages')).messages ?? []);
-        await this.refresh(); return {};
+        this.state.stats = stats; this.reducer.captureInspectionStats(stats); this.changed(); return {};
       }
       case 'new': {
         if (this.state.phase !== 'idle') throw new Error('Stop the agent before starting a new session.');
@@ -291,7 +297,7 @@ export class PiSession extends EventEmitter {
   close() {
     if (this.closed) return this.exited;
     this.closed = true; this.state.connected = false; this.state.phase = 'stopped'; this.state.activityMode = 'idle';
-    this.disconnectDelegations(); this.changed();
+    this.reducer.stopInspection(); this.disconnectDelegations(); this.changed();
     const kill = (signal) => {
       try {
         if (process.platform === 'win32') this.child.kill(signal);

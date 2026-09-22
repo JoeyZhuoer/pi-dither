@@ -1,3 +1,5 @@
+import { emptyInspection, normalizeInspection, InspectionTools, inspectionText, argumentText, reportedUsage, stopInspection } from './inspection.mjs';
+
 export const TEXT_LIMIT = 64_000;
 export const clip = (value, limit = TEXT_LIMIT) => {
   const text = String(value ?? '');
@@ -31,7 +33,7 @@ export function createAgentState(id, name, kind) {
   return {
     id, name, kind, phase: 'starting', connected: false, model: null, thinking: 'off',
     models: [], levels: ['off'], messages: [], queue: { steering: [], followUp: [] },
-    stats: null, error: null, notice: '', sessionId: null, revision: 0, trimmed: false,
+    inspection: emptyInspection('user', 'session'), stats: null, error: null, notice: '', sessionId: null, revision: 0, trimmed: false,
     sessionName: name, cwd: '', startedAt: Date.now(), lastActivityAt: null,
     currentTool: null, activity: [], activityMode: 'idle', currentUsage: null, availableTools: null, activeTools: null, extensionStatus: null,
     ...(kind === 'main' ? { delegations: [], delegationStatus: { available: false, message: 'Discovering delegation telemetry.', omitted: 0 } } : {}),
@@ -39,12 +41,45 @@ export function createAgentState(id, name, kind) {
 }
 
 export class AgentReducer {
-  constructor(state) { this.state = state; this.serial = 0; this.assistant = null; this.blocks = []; }
+  constructor(state, redact = (x) => x) { this.state = state; this.redact = redact; this.inspectionTools = new InspectionTools(redact); this.serial = 0; this.assistant = null; this.blocks = []; }
+  captureInspectionStats(stats) {
+    const dto = this.state.inspection;
+    dto.usage = reportedUsage({ ...stats?.tokens, cost: stats?.cost }, dto.timing.live, 'session');
+    this.inspectionTools.project(dto, stats?.toolCalls);
+    this.state.inspection = normalizeInspection(dto, this.redact, { kind: 'user', scope: 'session' });
+  }
+  stopInspection(settled = false) {
+    this.inspectionTools.stop();
+    this.state.inspection = stopInspection(this.state.inspection, { measured: settled });
+  }
+  inspectEvent(event) {
+    if (!['agent_start', 'agent_settled', 'message_start', 'tool_execution_start', 'tool_execution_end'].includes(event.type)) return;
+    const dto = this.state.inspection;
+    if (event.type === 'agent_start' && !this.hydrating && !dto.timing.live) {
+      dto.timing = { startedAt: Date.now(), endedAt: null, durationMs: null, scope: 'run', live: true };
+      dto.usage.provisional = true;
+    }
+    if (event.type === 'message_start' && event.message?.role === 'user') {
+      const text = inspectionText(contentText(event.message.content), this.redact, Number.MAX_SAFE_INTEGER);
+      dto.prompt = { text, kind: 'user', truncated: text.length > 8000 };
+    }
+    if (event.type === 'tool_execution_start') {
+      this.inspectionTools.start(event.toolCallId, event.toolName, event.args);
+      this.inspectionTools.project(dto);
+    }
+    if (event.type === 'tool_execution_end') {
+      this.inspectionTools.end(event.toolCallId, event.isError, !this.hydrating);
+      this.inspectionTools.project(dto);
+    }
+    if (event.type === 'agent_settled' && !this.hydrating) this.stopInspection(true);
+    this.state.inspection = normalizeInspection(this.state.inspection, this.redact, { kind: 'user', scope: 'session' });
+  }
   add(message) {
     this.state.messages.push({ id: `m${++this.serial}`, at: Date.now(), ...message });
     return this.state.messages.at(-1);
   }
   reset() {
+    this.inspectionTools = new InspectionTools(this.redact); this.state.inspection = emptyInspection('user', 'session');
     this.state.messages = []; this.state.queue = { steering: [], followUp: [] };
     this.state.error = null; this.state.notice = ''; this.state.stats = null;
     this.state.phase = 'idle'; this.state.activityMode = 'idle'; this.assistant = null; this.blocks = [];
@@ -52,7 +87,7 @@ export class AgentReducer {
     this.state.activity = []; this.state.lastActivityAt = null; this.state.revision++;
   }
   hydrate(messages) {
-    this.reset();
+    this.reset(); this.hydrating = true;
     for (const message of messages) {
       if (['user', 'assistant', 'custom'].includes(message.role)) this.apply({ type: 'message_start', message });
       if (message.role === 'assistant') {
@@ -62,6 +97,10 @@ export class AgentReducer {
       else if (message.role === 'bashExecution') this.add({ role: 'tool', name: 'bash', args: clip(message.command), text: clip(message.output), status: message.cancelled ? 'cancelled' : message.exitCode ? 'error' : 'done', at: message.timestamp });
       else if (['compactionSummary', 'branchSummary'].includes(message.role)) this.add({ role: 'assistant', text: clip(message.summary), status: 'done', at: message.timestamp });
     }
+    // Inherited clone/fork history cannot prove this child changed a file.
+    for (const call of this.inspectionTools.calls.values()) call.path = null;
+    this.hydrating = false; this.inspectionTools.stop(); this.inspectionTools.project(this.state.inspection);
+    this.state.inspection = normalizeInspection(this.state.inspection, this.redact, { kind: 'user', scope: 'session' });
     for (const message of this.state.messages) if (message.role === 'tool' && message.status === 'running') message.status = 'interrupted';
     this.state.phase = 'idle'; this.state.activityMode = 'idle'; this.state.currentTool = null; this.state.currentUsage = null;
     this.state.activity = []; this.state.lastActivityAt = messages.at(-1)?.timestamp ?? null;
@@ -72,6 +111,7 @@ export class AgentReducer {
       ?? this.add({ id: `tool:${id}`, role: 'tool', name, args: '', text: '', status: 'running' });
   }
   apply(event) {
+    this.inspectEvent(event);
     const state = this.state;
     const labels = { agent_start: 'Run started', agent_settled: 'Run settled', turn_start: 'Assistant turn started',
       tool_execution_start: `Tool started: ${clip(event.toolName, 80)}`, tool_execution_end: `Tool ${event.isError ? 'failed' : 'finished'}: ${clip(event.toolName, 80)}`,
@@ -147,7 +187,7 @@ export class AgentReducer {
       case 'tool_execution_start': {
         state.activityMode = 'tool';
         const tool = this.tool(event.toolCallId, event.toolName);
-        tool.args = clip(JSON.stringify(event.args, null, 2), 8_000); state.currentTool = event.toolName; break;
+        tool.args = argumentText(event.args, this.redact, 8000); state.currentTool = event.toolName; break;
       }
       case 'tool_execution_update':
         state.activityMode = 'tool';

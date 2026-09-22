@@ -1,0 +1,17 @@
+/* Hide only successfully enhanced selects; their form identity/value is retained. */
+select.pi-combobox-native{position:absolute!important;width:1px!important;height:1px!important;margin:-1px!important;padding:0!important;clip-path:inset(50%)!important;overflow:hidden!important;white-space:nowrap!important;pointer-events:none!important}
+button.pi-combobox{display:inline-flex;align-items:center;justify-content:space-between;gap:9px;min-width:0;max-width:100%;min-height:29px;padding:3px 7px;text-align:left;border:1px solid #20201f;border-radius:0;background:#dededb;color:#20201f;box-shadow:inset 1px 1px #fff,inset -1px -1px #92928f;font-family:VT323,'Courier New',monospace;line-height:1.1;cursor:pointer}
+button.pi-combobox:hover,button.pi-combobox[aria-expanded=true]{background:#e7bac7}
+button.pi-combobox:active{transform:none}
+button.pi-combobox:after{content:'';flex:none;width:10px;height:6px;background:#20201f;clip-path:polygon(0 0,100% 0,100% 33%,80% 33%,80% 66%,60% 66%,60% 100%,40% 100%,40% 66%,20% 66%,20% 33%,0 33%)}
+.pi-combobox-text{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+button.pi-combobox:disabled{opacity:.55;cursor:not-allowed}
+button.pi-combobox:focus-visible{outline:2px dashed #9c183d;outline-offset:2px}
+.pi-combobox-list{position:fixed;z-index:1100;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;touch-action:pan-y;padding:3px;border:1px solid #20201f;border-radius:0;background:#dededb;color:#20201f;box-shadow:inset 1px 1px #fff,inset -1px -1px #92928f,3px 3px #20201f;font:20px/1.15 VT323,'Courier New',monospace;scrollbar-color:#20201f #e7bac7;scrollbar-width:thin}
+.pi-combobox-list[hidden],button.pi-combobox[hidden]{display:none!important}
+.pi-combobox-option{position:relative;padding:6px 9px 6px 24px;min-height:32px;overflow-wrap:anywhere;white-space:normal;cursor:pointer}
+.pi-combobox-option[aria-selected=true]:before{content:'■';position:absolute;left:7px;font-size:12px;top:9px}
+.pi-combobox-option[data-active=true],.pi-combobox-option:not([aria-disabled=true]):hover{background:#20201f;color:#e7bac7}
+.pi-combobox-option[aria-disabled=true]{color:#777;cursor:not-allowed}
+.feature-field>button.pi-combobox{width:100%}
+@media(pointer:coarse){.pi-combobox-option{min-height:40px;padding-top:9px;padding-bottom:9px}}

@@ -19,6 +19,19 @@ function contextFor(canvas) {
 // Unknown inputs safely return to the original idle field.
 const activityMode = value => value === 'thinking' || value === 'output' ? value : 'idle';
 
+// Busy modes ride a bounded, size-relative translation so the whole dithered
+// field visibly flows instead of only flickering: output streams up and down,
+// thinking wanders diagonally. A constant-speed triangle keeps the cadence
+// steady, and whole-cell offsets make every frame an exact translation of the
+// previous pattern rather than a re-dither flicker. Idle keeps its own
+// vibration and has no offset.
+const triangle = value => 2 / Math.PI * Math.asin(Math.sin(2 * Math.PI * value));
+function flowOffset(mode, time, width, height) {
+  if (mode === 'output') return { x: 0, y: Math.round(Math.round(height * .13) * triangle(time / 6)) };
+  if (mode === 'thinking') return { x: Math.round(Math.round(width * .06) * triangle(time / 7)), y: Math.round(Math.round(height * .11) * triangle(time / 6.5)) };
+  return null;
+}
+
 export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
   const ctx = contextFor(canvas);
   if (!ctx) return;
@@ -35,24 +48,28 @@ export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
   ctx.fillStyle = '#20201f';
   const time = Number.isFinite(timeSeconds) ? timeSeconds : 0;
   const mode = activityMode(activity);
-  const driftX = Math.sin(time * (mode === 'thinking' ? .32 : .13)) * (mode === 'thinking' ? .065 : .035);
-  const driftY = Math.sin(time * (mode === 'thinking' ? .29 : .11)) * (mode === 'thinking' ? .055 : .025);
+  // Only idle drifts internally. Busy fields stay rigid so all of their motion
+  // is one coherent translation of the complete pattern.
+  const driftX = mode === 'idle' ? Math.sin(time * .13) * .035 : 0;
+  const driftY = mode === 'idle' ? Math.sin(time * .11) * .025 : 0;
+  const flow = flowOffset(mode, time, width, height);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-    const u = x / width, v = y / height;
+    const sx = flow ? x + flow.x : x, sy = flow ? y + flow.y : y;
+    const u = sx / width, v = sy / height;
     const a = Math.exp(-(((u + .04 - driftX) / .25) ** 2 + ((v - 1.02 - driftY) / .31) ** 2));
     const b = Math.exp(-(((u - .52 + driftX) / .19) ** 2 + ((v - 1.05 + driftY) / .22) ** 2));
     const c = Math.exp(-(((u - 1.01 - driftY) / .20) ** 2 + ((v - .55 - driftX) / .23) ** 2));
-    // Thinking circulates curved bands; output carries straighter bands upward.
-    // Keep the envelope, ink, Bayer threshold and idle arithmetic unchanged.
+    // Idle keeps the original slow band arithmetic. Busy band shapes are
+    // static and ride the translation above, so they flow with the field.
     const phase = mode === 'thinking'
-      ? x * .25 + y * .19 + time * .7 + Math.sin(y * .055 - time * .22) * 13
-      : mode === 'output' ? y * .34 + x * .07 + time * 1.4 + Math.sin(x * .035) * 3
+      ? sx * .25 + sy * .19 + Math.sin(sy * .055) * 13
+      : mode === 'output' ? sy * .34 + sx * .07 + Math.sin(sx * .035) * 3
         : x * .41 + y * .27 + time * .24 + Math.sin(y * .073 + time * .09) * 9;
     const wave = .65 + .35 * Math.sin(phase);
     const density = Math.max(a, b, c) * wave * .88;
-    const threshold = BAYER[(y % 4) * 4 + x % 4] / 16;
+    const threshold = BAYER[(((Math.floor(sy) % 4) + 4) % 4) * 4 + (((Math.floor(sx) % 4) + 4) % 4)] / 16;
     if (density > threshold + .06) ctx.fillRect(x, y, 1, 1);
-    else if (x % 3 === 0 && y % 3 === 0) ctx.fillRect(x, y, .45, .45);
+    else if (((Math.floor(sx) % 3) + 3) % 3 === 0 && ((Math.floor(sy) % 3) + 3) % 3 === 0) ctx.fillRect(x, y, .45, .45);
   }
 }
 

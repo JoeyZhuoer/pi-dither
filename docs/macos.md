@@ -10,7 +10,7 @@ Choose **Windows → Workspace** to select a project; the initial workspace is y
 
 The native window can be minimized/hidden and restored from the Dock or **View → Show Main Window**. Closing it hides it without killing a task. **⌘Q** requests current status, warns about active/incompletely observed jobs, then requests orderly backend shutdown. Detached pi-subagents jobs retain their upstream lifecycle and may outlive the app, particularly jobs from earlier main sessions; current-session telemetry cannot prove all detached jobs have finished. Finish or stop them before quitting. A service crash presents an error rather than silently launching a second writer or resending prompts.
 
-Copy/paste/select-all, native alert/confirm/text-entry dialogs, Reload Interface and an About panel are provided. Links outside the exact local service origin are blocked; a user-initiated HTTP(S) link offers **Copy Link** instead of opening a browser or navigating the privileged webview. There is no generic JavaScript-to-native filesystem/shell bridge.
+Copy/paste/select-all, native alert/confirm/text-entry dialogs, Reload Interface and an About panel are provided. The local development build automatically fits newly opened panels by purpose and follows native resizing; separate Auto-size/↗ controls and the native sizing menu command have been removed. Manual layouts remain protected. Arrange resets compact defaults for fitting on selection; an explicitly requested one-shot reset can clear old window preferences. The background vibrates gently while stopped and visibly flows (thinking wanders, output streams up and down) while an agent is busy; reduced motion and manual pause still win. Native Reload forces a full document navigation and privately restores authentication rather than merely navigating back to a stripped token fragment. See the [unreleased feature audit](native-feature-audit.md). Links outside the exact local service origin are blocked; a user-initiated HTTP(S) link offers **Copy Link** instead of opening a browser or navigating the privileged webview. There is no generic JavaScript-to-native filesystem/shell bridge.
 
 ## Data and process boundaries
 
@@ -23,6 +23,16 @@ Copy/paste/select-all, native alert/confirm/text-entry dialogs, Reload Interface
 - Stdin EOF (including native shell exit/crash) asks the host to close its owned Pi sessions. Normal quit waits for backend exit. It does not indiscriminately kill extension-owned process groups or other Pi conversations. Force-killing the backend itself or whole-machine crashes cannot provide graceful cleanup guarantees.
 - Main tools and delegated writers are **not an OS sandbox**. The manual child read-only ceiling is unchanged. Only the bundled approved pi-subagents package is explicitly loaded into main; unrelated installed extensions are not packaged.
 
+## Reset window layout only
+
+The local follow-up supports `--reset-window-layout`. First quit normally (finish active work first), then explicitly launch:
+
+```sh
+open "$HOME/Applications/Pi Dither.app" --args --reset-window-layout
+```
+
+This clears only the native `PiDitherMain` saved frame, `pi-desktop:layout:v1` and session-storage observer-dismissal keys prefixed `pi-desktop:delegated-closed:v1:`. The page reset runs before UI initialization at the exact private local origin; its script is removed after that first load, so Reload and later ordinary launches preserve newly chosen geometry. It never clears the whole website store or changes conversations, credentials, workspace preferences or motion settings. Normal app relaunch still starts a fresh main session; saved conversations remain available in Sessions.
+
 ## Build
 
 Prerequisites: macOS/Apple Silicon, Xcode Command Line Tools, Node 22.23.2, installed **core Pi 0.85.1** and **pi-subagents 0.69.0**. These are build inputs only. Build offline; nothing is installed into the user's Pi profile.
@@ -32,6 +42,8 @@ npm run app:build
 npm run test:macos
 npm run app
 ```
+
+To validate a development build without overwriting existing `dist/` artifacts, set `PI_DITHER_BUILD_DIR` to a dedicated output directory, then pass its app path through `PI_DITHER_TEST_APP` to `npm run test:macos`. The test refuses to start while another Pi Dither executable is running; it never stops that instance for you. Builds include `source-inventory.json` hashes of allowlisted app files and native/build inputs, checked against source by the native tests.
 
 `PI_WORKSTATION_PI_ROOT` and `PI_DESKTOP_SUBAGENTS_ROOT` can point to those installed package roots for the build. `PI_DITHER_NODE_LICENSE` can locate the matching Node distribution LICENSE if it is not beside the runtime's `bin` directory. The packager rejects incompatible Pi/subagent versions and escaping runtime symlinks.
 
@@ -45,6 +57,6 @@ The packager copies only allowlisted application source, Node and installed publ
 
 ## Validation and limitations
 
-`npm run test:macos` copies the signed bundle to a path with spaces outside the checkout, uses an empty temporary Pi profile, strips the global runtime from PATH, opens the actual AppKit/WKWebView window through direct-executable and Finder/LaunchServices routes, checks connected empty main/bundled extension tools/no startup children/token removal, quits, and checks for surviving owned processes. It sends **no provider prompts**. Unit tests cover lease exclusivity/release, authenticated service startup and quit-state classification. Chromium/real-DOM/terminal checks remain separately available.
+`npm run test:macos` copies the signed bundle to a path with spaces outside the checkout, uses an empty temporary Pi profile, strips the global runtime from PATH, opens the actual AppKit/WKWebView window through direct-executable and Finder/LaunchServices routes, checks connected empty main/bundled extension tools/no startup children/token removal, exercises all eight utility windows, native resizing/auto-size/manual preservation/maximize, draft create-close, dropdowns, motion, hide/reopen and Reload, then quits, and checks for surviving owned processes. The direct fixture also seeds stale layouts and unrelated preferences, verifies the selective one-shot reset, and proves Reload preserves subsequent manual geometry. It sends **no provider prompts**. Unit tests cover lease exclusivity/release, authenticated service startup and quit-state classification. Chromium/real-DOM/terminal checks remain separately available.
 
 macOS 14 is the compilation/deployment floor, not a claim that every older macOS version has been manually tested. Full paid-provider streaming, real child billing/completion, Intel, exhaustive WebKit interactions/accessibility, distribution Gatekeeper approval and notarization remain outside this validation.

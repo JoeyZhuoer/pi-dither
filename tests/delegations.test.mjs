@@ -107,11 +107,17 @@ test('version failure, hostile inputs, payload bounds, allowlisted fields and bo
   assert.equal(JSON.stringify(host.snapshot()).includes('temporary'), false, 'redact before host clipping');
 });
 
-test('bridge discovers only via bus, executes allowlisted read-only inspect handlers, bounds work and disposes timers/listeners', async () => {
+test('bridge discovers only via bus, executes allowlisted read-only inspect handlers, bounds work and disposes timers/listeners', { timeout: 5000 }, async (t) => {
   const { events, requests, emitter } = busFixture((request, reply) => reply(request.method === 'ping' ? ping : { asyncSnapshot: workflow() }));
   const publishes = [], inspections = [];
-  let active = 0, maximum = 0;
-  const bridge = new DelegationBridge({ sessionId: 's', generation: 1, events, publish: (s) => publishes.push(s), interval: 20,
+  let active = 0, maximum = 0, observed, deadline;
+  const fourInspections = new Promise((resolve, reject) => {
+    observed = resolve;
+    // The production poll timer is intentionally unref'd. Keep this fixture alive
+    // until its evidence arrives, rather than assuming two cycles fit in 35 ms.
+    deadline = setTimeout(() => reject(new Error('Four inspect replies did not arrive')), 4000);
+  });
+  const bridge = new DelegationBridge({ sessionId: 's', generation: 1, events, publish: (s) => { publishes.push(s); if (inspections.length >= 4) observed(); }, interval: 20,
     context: { prompt() { assert.fail('no model prompts'); }, sendMessage() { assert.fail('no conversation mutations'); } },
     inspectCommand: { async handler(args, ctx) {
       active++; maximum = Math.max(active, maximum); await sleep(2);
@@ -120,7 +126,8 @@ test('bridge discovers only via bus, executes allowlisted read-only inspect hand
         requestId, asyncId, childId, messages: [{ role: 'assistant', kind: 'text', text: 'inspection ' + inspections.length }] })]);
       ctx.ui.setWidget('subagent-inspect', undefined); active--;
     } } });
-  await bridge.start(); await sleep(35); bridge.dispose();
+  t.after(() => { clearTimeout(deadline); bridge.dispose(); });
+  await bridge.start(); await fourInspections; clearTimeout(deadline); bridge.dispose();
   assert.equal(maximum, 1); assert.ok(inspections.length >= 4); assert.ok(requests.every((r) => ['ping', 'status'].includes(r.method)));
   assert.ok(inspections.every((s) => s.endsWith('--lines 40'))); assert.ok(publishes.at(-1).delegations[0].messages[0].text.startsWith('inspection'));
   const count = requests.length, sent = publishes.length; await sleep(35);

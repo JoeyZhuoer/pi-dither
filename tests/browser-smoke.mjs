@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events';
 import { createDesktop } from '../desktop/server.mjs';
 import { createAgentState } from '../desktop/protocol.mjs';
 import { checkDelegatedBrowser } from './delegated-browser-checks.mjs';
+import { checkManualInspectionBrowser, checkIntegratedCombobox } from './inspection-browser-checks.mjs';
 
 class BrowserFixture extends EventEmitter {
   constructor({ id, name, kind, tools }) {
@@ -95,6 +96,7 @@ try {
   await rpc('Page.navigate', { url });
   await until('document.querySelector(".main-window .send")?.disabled === false');
   await evaluate('document.fonts.ready');
+  await checkIntegratedCombobox({ evaluate, until, rpc });
   assert.equal(await evaluate('location.hash'), '', 'authorization token removed from address bar');
   assert.equal(await evaluate('document.querySelectorAll(".app-window:not([hidden])").length'), 1, 'startup opens only main, not automatic Scout/Review drafts');
   assert.equal(await evaluate('document.querySelectorAll("[data-subagent-index]").length'), 0);
@@ -106,6 +108,28 @@ try {
   await evaluate(`window.backdropHash = () => { const c=document.querySelector('#backdrop'), pixels=c.getContext('2d').getImageData(0,0,c.width,c.height).data; let hash=2166136261; for(let i=3;i<pixels.length;i+=4) hash=Math.imul(hash^pixels[i],16777619); return hash; }; window.initialPattern=backdropHash();`);
   await until('backdropHash() !== initialPattern');
   assert.ok(await evaluate('document.querySelector("#backdrop").width * document.querySelector("#backdrop").height <= 100000'));
+  if (app) {
+    // Synthetic busy states drive the flowing field; no provider or prompt.
+    const main = app.sessions.get('main');
+    const setActivity = async (phase, mode, expected) => {
+      main.state.phase = phase; main.state.activityMode = mode; main.emit('change');
+      await until(`document.querySelector("#backdrop").dataset.activity === ${JSON.stringify(expected)}`);
+    };
+    const captureBackdrop = async (name) => {
+      const data = await evaluate('document.querySelector("#backdrop").toDataURL("image/png")');
+      await writeFile(resolve(`.local/backdrop-${name}.png`), Buffer.from(data.split(',')[1], 'base64'));
+    };
+    await captureBackdrop('idle');
+    await setActivity('running', 'thinking', 'thinking');
+    await captureBackdrop('thinking');
+    await setActivity('running', 'output', 'output');
+    await captureBackdrop('output');
+    const flowing = await evaluate('backdropHash()');
+    await until(`backdropHash() !== ${flowing}`);
+    await setActivity('stopped', 'idle', 'idle');
+    await until(`document.querySelector("#backdrop").dataset.activity === "idle"`);
+    main.state.phase = 'idle'; main.emit('change');
+  }
   await evaluate('document.querySelector("#help").click(); document.querySelector("#background-motion").click(); document.querySelector("#help-dialog").close()');
   const pausedPattern = await evaluate('backdropHash()');
   await evaluate('new Promise(resolve => setTimeout(resolve, 260))');
@@ -131,6 +155,14 @@ try {
   for (const type of ['mousePressed', 'mouseReleased']) await rpc('Input.dispatchMouseEvent', { type, x: chartHeading.x, y: chartHeading.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
   await until('document.querySelector("[data-window-id=usage]").hidden === false');
   await evaluate(`document.querySelector('[data-window-id=usage] button[aria-label="Close utility window"]').click()`);
+  // The initial main fits without any sizing control, and follows the viewport.
+  assert.equal(await evaluate('document.querySelector("#auto-size, [aria-label=\\"Zoom to working size\\"]")'), null);
+  const autoWidth = await evaluate('document.querySelector(".main-window").offsetWidth');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1")).main.sizeMode'), 'auto');
+  await rpc('Emulation.setDeviceMetricsOverride', { width: 980, height: 740, deviceScaleFactor: 1, mobile: false });
+  await until(`document.querySelector('.main-window').offsetWidth < ${autoWidth}`);
+  await rpc('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
+  await until(`document.querySelector('.main-window').offsetWidth === ${autoWidth}`);
   const original = await evaluate('({x:document.querySelector(".main-window").offsetLeft,y:document.querySelector(".main-window").offsetTop})');
   const title = await evaluate('(()=>{const r=document.querySelector(".main-window .titlebar").getBoundingClientRect();return {x:r.x+100,y:r.y+10}})()');
   for (const [type, x, y] of [['mousePressed', title.x, title.y], ['mouseMoved', title.x + 30, title.y + 20], ['mouseReleased', title.x + 30, title.y + 20]]) {
@@ -168,11 +200,15 @@ try {
     assert.equal(app.sessions.size, 1, 'unavailable metadata cannot silently widen a custom draft selection');
     main.state.availableTools = catalog; main.emit('change');
     await until(`!document.querySelector('[data-subagent-index="1"] .draft-footer button').disabled`);
+    const draftGeometry = await evaluate(`(() => { const draft=document.querySelector('[data-subagent-index="1"]'); draft.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true})); return ['left','top','width','height'].map(key=>draft.style[key]); })()`);
     await evaluate(`document.querySelector('[data-subagent-index="1"] .draft-body').requestSubmit()`);
     await until('document.querySelectorAll(".child-transfer").length === 1 && document.querySelector(".sub-window .message.assistant") !== null');
     assert.equal(app.sessions.size, 2, 'only explicitly launched child is created');
     assert.deepEqual([...app.sessions.values()].find((agent) => agent.state.kind === 'subagent').state.activeTools, ['read'], 'prelaunch selection is sent before the first prompt');
     const childId = [...app.sessions.keys()].find((id) => id !== 'main');
+    assert.deepEqual(await evaluate(`(() => { const child=document.querySelector('[data-window-id="${childId}"]'); return ['left','top','width','height'].map(key=>child.style[key]); })()`), draftGeometry, 'launched child inherits manually chosen draft geometry');
+    assert.equal(await evaluate(`JSON.parse(localStorage.getItem('pi-desktop:layout:v1'))[${JSON.stringify(childId)}].sizeMode`), 'manual', 'draft sizing intent survives replacement');
+    await checkManualInspectionBrowser({ app, childId, evaluate, until });
     await until(`document.querySelector('#usage-diagram').dataset.agentId === ${JSON.stringify(childId)}`);
     assert.equal(await evaluate('window.pwned'), undefined);
     assert.equal(await evaluate('document.querySelectorAll(".message-body img").length'), 0);
@@ -253,7 +289,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, safe text, handoff, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, auto-zoom, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, flowing busy backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, auto-zoom, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

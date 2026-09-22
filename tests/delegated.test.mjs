@@ -55,7 +55,7 @@ test('observer lifecycle replaces cumulative output, preserves minimize, suppres
   assert.equal(win.kind, 'delegated'); assert.equal(win.element.dataset.delegationId, 'run/child');
   assert.equal(win.element.dataset.subagentIndex, undefined);
   assert.match(win.title, /DELEGATED.*Observer/);
-  assert.equal(win.body.children[1].textContent, 'TASK / <script>task</script>');
+  assert.equal(win.body.children[1].children[1].children[0].children[1].textContent, 'Assigned task\n<script>task</script>');
   win.minimized = true;
   model.reconcile(main([row({ messages: [{ role: 'assistant', text: 'one two' }], finalOutput: 'done', error: '<error>' })]), 'ctx', true);
   assert.equal(f.adds(), 1); assert.equal(win.minimized, true);
@@ -111,4 +111,21 @@ test('render budget preserves final/error and bounds cumulative payload', () => 
   assert.equal(output.children.at(-2).children[1].textContent.length, 24000);
   assert.equal(output.children.at(-1).textContent.length, 8000);
   assert.equal(output.children.slice(0, -1).reduce((n, item) => n + item.children[1].textContent.length, 0), 64000);
+});
+
+test('inspection updates independently of output signatures without reopening observers', () => {
+  const f = fixture(), model = f.create();
+  const inspection = (totalTokens) => ({ version: 1, prompt: { kind: 'task', text: 'Assigned' }, usage: { totalTokens, costUsd: 0, scope: 'child', provisional: true } });
+  model.reconcile(main([row({ inspection: inspection(0) })]), 'ctx', true);
+  const win = [...f.live.values()][0], shell = win.body.children[1], output = win.body.children[2];
+  const message = output.children[0]; shell.open = true; shell.children[1].children[3].open = true; shell.scrollTop = 25;
+  win.minimized = true;
+  model.reconcile(main([row({ inspection: inspection(23) })]), 'ctx', true);
+  assert.match(shell.children[0].textContent, /23 tokens/);
+  assert.equal(output.children[0], message); assert.equal(shell.open, true); assert.equal(shell.children[1].children[3].open, true);
+  assert.equal(shell.scrollTop, 25); assert.equal(win.minimized, true); assert.equal(f.adds(), 1);
+  model.reconcile(main([row({ inspection: inspection(23) })]), 'ctx', false);
+  assert.match(shell.children[0].textContent, /disconnected/);
+  win.onClose(); model.reconcile(main([row({ inspection: inspection(99) })]), 'ctx', true);
+  assert.equal(f.live.size, 0); assert.equal(f.adds(), 1);
 });

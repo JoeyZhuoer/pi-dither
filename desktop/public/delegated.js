@@ -1,4 +1,5 @@
 import { renderMarkdown } from './markdown.js';
+import { createInspectionPanel } from './inspection.js';
 
 const activeStatuses = new Set(['queued', 'running']);
 const text = (value, limit = 24000) => typeof value === 'string' ? value.slice(0, limit) : '';
@@ -48,7 +49,7 @@ export function installDelegatedObservers({ windows, storage, document: doc = do
   function reconcile(main, context, connected) {
     const nextScope = JSON.stringify([context || '', main?.sessionId || '']);
     if (nextScope !== scope) {
-      for (const id of panels.keys()) windows.remove(id);
+      for (const [id, panel] of panels) { panel.inspection.destroy(); windows.remove(id); }
       panels.clear(); scope = nextScope; suppressed = new Set();
       try {
         const saved = JSON.parse(storage?.getItem(storageKey()) || '[]');
@@ -59,7 +60,7 @@ export function installDelegatedObservers({ windows, storage, document: doc = do
     const kept = new Set(rows.map((row) => delegatedId(context || '', main.sessionId, row.id)));
     // Release vanished views before allocating; hidden views still occupy a
     // right-side position and surviving windows never jump between positions.
-    for (const id of panels.keys()) if (!kept.has(id)) { windows.remove(id); panels.delete(id); }
+    for (const [id, panel] of panels) if (!kept.has(id)) { panel.inspection.destroy(); windows.remove(id); panels.delete(id); }
     for (const row of rows) {
       const id = delegatedId(context || '', main.sessionId, row.id);
       if (suppressed.has(id)) continue;
@@ -73,21 +74,23 @@ export function installDelegatedObservers({ windows, storage, document: doc = do
           onClose: () => {
             suppressed.add(id);
             try { storage?.setItem(storageKey(), JSON.stringify([...suppressed].slice(-256))); } catch { /* Optional. */ }
-            panels.delete(id); windows.remove(id);
+            panels.get(id)?.inspection.destroy(); panels.delete(id); windows.remove(id);
           } });
         win.element.classList.add('delegated-window');
         win.element.dataset.delegationId = row.id;
         const close = win.element.querySelector('[aria-label="Close subagent window"]');
         if (close) { close.setAttribute('aria-label', 'Close delegated observer'); close.title = 'Close observer only; task continues'; }
         const status = node('div', 'agent-meta delegated-status'); status.setAttribute('role', 'status');
-        const task = node('div', 'delegated-task');
+        const inspection = createInspectionPanel({ document: doc, kind: 'delegated' });
         const output = node('div', 'conversation'); output.setAttribute('aria-label', 'Delegated output'); output.tabIndex = 0;
-        win.body.append(status, task, output, node('div', 'agent-footer', 'DISPLAY ONLY · Existing extension child · Bounded output preview · Closing does not stop work'));
-        panel = { win, status, task, output }; panels.set(id, panel);
+        win.body.append(status, inspection.element, output, node('div', 'agent-footer', 'DISPLAY ONLY · Existing extension child · Bounded output preview · Closing does not stop work'));
+        panel = { win, status, inspection, output }; panels.set(id, panel);
       }
       windows.rename(id, `DELEGATED / ${text(row.name, 100) || 'Child'} · Observer`);
       panel.status.textContent = `DELEGATED · ${connected && main.connected ? text(row.status, 40).toUpperCase() || 'UNKNOWN' : 'DISCONNECTED'} · DISPLAY ONLY`;
-      panel.task.textContent = `TASK / ${text(row.task, 8000)}`;
+      // Legacy task scope is explicit; no legacy inference for tools/files/usage.
+      const inspection = row.inspection ?? { version: 1, prompt: { text: typeof row.task === 'string' ? text(row.task, 8000) : null, kind: 'task', truncated: typeof row.task === 'string' && row.task.length > 8000 } };
+      panel.inspection.update(inspection, { connected: Boolean(connected && main.connected) });
       // Bound both per-message and total rendering, replacing cumulative snapshots.
       let remaining = 64000;
       const take = (value) => { const valueText = text(value, Math.min(24000, remaining)); remaining -= valueText.length; return valueText; };

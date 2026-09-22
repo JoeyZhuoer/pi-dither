@@ -3,6 +3,8 @@ import { startBackdrop } from './backdrop.js';
 import { installDelegatedObservers, aggregateActivity, delegationNotice, delegationRows } from './delegated.js';
 import { renderMarkdown } from './markdown.js';
 import { installFeatureWindows, installUsageDiagram } from './features.js';
+import { createInspectionPanel } from './inspection.js';
+import { installComboboxes, syncCombobox } from './combobox.js';
 
 const $ = (selector, parent = document) => parent.querySelector(selector);
 const windows = new DesktopWindows($('#desktop'), $('#tasks'));
@@ -71,7 +73,12 @@ function createAgentPanel(id, name, kind = 'subagent', preferredSlot) {
   } });
   win.body.innerHTML = '<div class="agent-meta"><span class="phase" role="status">STARTING</span><span class="session-tag"></span><span class="agent-kind"></span></div><div class="model-toolbar"><label class="model-field">MODEL <select class="model-select" aria-label="Model"></select></label><label>THINK <select class="thinking-select" aria-label="Thinking level"></select></label><button class="new-session">New session</button></div><div class="agent-error" role="alert" hidden></div><div class="conversation" aria-label="Conversation" tabindex="0"></div><div class="queue" hidden></div><form class="composer"><div class="composer-head"><span>INSTRUCTION /</span><span class="input-tip">CTRL/CMD + ENTER TO SEND</span></div><textarea aria-label="Message to agent" placeholder="What should we work on?" maxlength="32000"></textarea><div class="composer-actions"><button type="button" class="stop danger">Stop</button><select class="delivery" aria-label="Message delivery"><option value="steer">Steer</option><option value="followUp">Follow-up</option></select><button type="submit" class="send primary">Send ↗</button></div></form><div class="agent-footer"><span class="tokens">TOKENS / —</span><span class="cost">COST / —</span><span class="access"></span></div>';
   win.slot = slot; if (slot) win.element.dataset.subagentIndex = String(slot);
-  const panel = { id, kind, win, messages: new Map(), pending: false, revision: -1 };
+  const inspection = kind === 'main' ? null : createInspectionPanel({ document, kind });
+  if (inspection) {
+    win.body.classList.add('has-inspection');
+    win.body.insertBefore(inspection.element, $('.conversation', win.body));
+  }
+  const panel = { id, kind, win, inspection, messages: new Map(), pending: false, revision: -1 };
   panels.set(id, panel);
   reconcileDraftSlots();
   const toolsButton = meta('Tools', 'button', 'tool-settings'); toolsButton.type = 'button';
@@ -150,6 +157,8 @@ function updateControls(panel) {
   $('.stop', body).disabled = unavailable || !busy;
   $('.tool-settings', body).disabled = !Array.isArray(state?.availableTools) || !Array.isArray(state?.activeTools);
   for (const selector of ['.model-select', '.thinking-select', '.new-session']) $(selector, body).disabled = unavailable || busy;
+  for (const select of body.querySelectorAll('select')) syncCombobox(select);
+  panel.inspection?.update(state?.inspection, { connected: connected && state?.connected === true });
 }
 function updateSelect(select, choices, value) {
   const signature = JSON.stringify(choices);
@@ -158,6 +167,7 @@ function updateSelect(select, choices, value) {
     select.dataset.signature = signature;
   }
   if (value != null) select.value = value;
+  syncCombobox(select);
 }
 function messageNode(message) {
   if (message.role === 'tool') {
@@ -272,7 +282,7 @@ function updateFleet() {
     $('#connection').title = workspace; $('#connection').classList.remove('error');
   }
 }
-function removePanel(id) { windows.remove(id); panels.delete(id); states.delete(id); updateFleet(); }
+function removePanel(id) { panels.get(id)?.inspection?.destroy(); windows.remove(id); panels.delete(id); states.delete(id); updateFleet(); }
 function addDraft(role = 'SUBAGENT', savedId) {
   if (windows.list().filter((win) => win.kind === 'main' || win.kind === 'subagent').length >= 10) { toast('Close a window before adding another.'); return; }
   const slot = freeSubagentIndex(), id = savedId || `draft-${crypto.randomUUID()}`;
@@ -313,8 +323,8 @@ function addDraft(role = 'SUBAGENT', savedId) {
       const child = createAgentPanel(result.id, result.name || numberedName(role, result.slot || win.slot), 'subagent', result.slot || win.slot);
       // Preserve the draft's preferred (not viewport-clamped) layout unless the
       // user already adjusted the live child while the launch was in flight.
-      if (!child.win.zoomed) {
-        child.win.layoutRect = { ...win.layoutRect }; child.win.zoomed = win.zoomed; windows.reflow(child.win);
+      if (child.win.sizeMode !== 'manual') {
+        child.win.layoutRect = { ...win.layoutRect }; child.win.zoomed = win.zoomed; child.win.sizeMode = win.sizeMode; windows.reflow(child.win);
       }
       drafts.delete(id); windows.remove(id); windows.focus(child.win);
       if (state) renderAgent(state);
@@ -381,6 +391,7 @@ async function eventStream() {
 }
 
 createAgentPanel('main', 'Main agent', 'main');
+installComboboxes(document);
 features = installFeatureWindows({ windows, api, toast, getState: featureState });
 usageDiagram = installUsageDiagram($('#usage-diagram'), () => {
   if (desktopVersion) features.open('usage');

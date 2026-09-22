@@ -1,3 +1,5 @@
+import { syncCombobox } from './combobox.js';
+
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
   git: 'Git & worktrees', usage: 'Usage', sessions: 'Sessions', activity: 'Activity', tools: 'Tools',
@@ -23,6 +25,7 @@ function choices(select, items, value) {
     if (items.some(([key]) => key === previous)) select.value = previous;
   }
   if (value != null) select.value = value;
+  syncCombobox(select);
 }
 
 const nonnegative = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -109,6 +112,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     for (const [element, allowed] of guards) {
       if (!element.isConnected) { guards.delete(element); continue; }
       element.disabled = mutation || !allowed();
+      syncCombobox(element);
     }
   }
   function button(text, testid, callback, allowed) {

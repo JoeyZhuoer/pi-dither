@@ -1,0 +1,66 @@
+// Shared real-DOM checks for Chromium and the native WKWebView fixture.
+export async function checkWindowsDOM({ DesktopWindows }) {
+  const assert = (ok, message) => { if (!ok) throw new Error(message); };
+  const until = async predicate => {
+    for (let i = 0; i < 80; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
+    throw new Error('Window geometry did not settle');
+  };
+  const key = 'pi-desktop:layout:v1', saved = localStorage.getItem(key);
+  localStorage.removeItem(key);
+  const desktop = document.createElement('main'), tasks = document.createElement('footer');
+  const mobile = matchMedia('(max-width:760px)').matches;
+  desktop.style.cssText = `position:relative;width:${mobile ? '100%' : '1200px'};height:760px;`;
+  document.body.append(desktop, tasks);
+  const engine = new DesktopWindows(desktop, tasks);
+  try {
+    const main = engine.add({ id: 'main', kind: 'main', title: 'Main' });
+    const input = document.createElement('textarea'); main.body.append(input);
+    const initial = JSON.stringify(main.rect); input.focus(); assert(JSON.stringify(main.rect) === initial, 'typing does not resize controls');
+    if (mobile) {
+      const preferred = JSON.stringify(main.layoutRect);
+      assert(engine.autoSize(main) === false, 'mobile uses stacked sizing');
+      engine.resize(); assert(JSON.stringify(main.layoutRect) === preferred, 'mobile does not overwrite desktop preference');
+      return 'mobile stacked layout preserves sizing preference';
+    }
+    assert(main.sizeMode === 'auto' && main.rect.w > engine.defaultRect('main').w, 'main fits at creation without interaction');
+    assert(!main.element.querySelector('[aria-label="Zoom to working size"]'), 'no separate sizing button');
+    const child = engine.add({ id: 'child', kind: 'subagent', title: 'Child' });
+    const observer = engine.add({ id: 'observer', kind: 'delegated', title: 'Observer' });
+    assert(child.sizeMode === 'auto' && observer.sizeMode === 'auto', 'children and observers fit on creation');
+    assert(main.rect.w > observer.rect.w && observer.rect.w > child.rect.w, 'agent purposes have distinct suitable widths');
+    const dimensions = new Set();
+    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
+      const win = engine.add({ id, kind: 'utility', title: id, hidden: true });
+      const before = win.rect.w; win.task.click();
+      assert(win.sizeMode === 'auto' && win.rect.w >= before, id + ' auto-sizes through taskbar');
+      dimensions.add(win.rect.w + '/' + win.rect.h);
+      win.element.querySelector('[aria-label="Close utility window"]').click(); assert(win.element.hidden, id + ' close remains hide');
+    }
+    assert(dimensions.size >= 4, 'purpose-specific sizes');
+    const models = engine.windows.get('models'); engine.show(models.id);
+    const wide = models.rect.w;
+    // Intentionally no synthetic window.resize: ResizeObserver must notice the container.
+    desktop.style.width = '800px'; desktop.style.height = '560px';
+    await until(() => models.rect.w < wide); assert(models.sizeMode === 'auto', 'narrow fit stays automatic');
+    desktop.style.width = '1200px'; desktop.style.height = '760px';
+    await until(() => models.rect.w === wide);
+    engine.place(models, { x: 25, y: 30, w: 700, h: 500 }); engine.save();
+    desktop.style.width = '1000px'; await until(() => desktop.clientWidth === 1000);
+    engine.resize(); assert(models.rect.w === 700 && models.sizeMode === 'manual', 'manual sizes win');
+    engine.hide(models.id); const focus = engine.focused;
+    desktop.style.width = '1200px'; engine.resize();
+    assert(models.element.hidden && engine.focused === focus, 'native resize neither reveals nor focuses hidden windows');
+    models.task.click(); assert(models.rect.w === 700, 'hide/show keeps manual geometry');
+    engine.arrange(); models.task.click(); assert(models.sizeMode === 'auto' && models.rect.w === wide, 'Arrange resets old/manual geometry for automatic fitting');
+    assert(JSON.parse(localStorage.getItem(key)).models.sizeMode === 'auto', 'auto intent is persisted');
+    main.task.click();
+    const beforeMax = main.rect.w;
+    const maximize = main.element.querySelector('[aria-label="Maximize or restore main window"]');
+    maximize.click(); maximize.click(); assert(main.sizeMode === 'auto' && main.rect.w === beforeMax, 'maximize/restore preserves automatic intent');
+    engine.arrange(); assert([...engine.windows.values()].every(win => win.sizeMode === 'compact'), 'Arrange resets sizing intent');
+    return 'all eight utility sizes, native/container resize recovery, manual/hidden/focus preservation, automatic fitting on opening, maximize and Arrange passed';
+  } finally {
+    engine.destroy(); desktop.remove(); tasks.remove();
+    if (saved === null) localStorage.removeItem(key); else localStorage.setItem(key, saved);
+  }
+}

@@ -8,9 +8,9 @@ Based on the user-supplied retro desktop reference (`截屏2026-09-19 16.54.12.p
 
 The main agent has the largest agent window. Subagent windows are draggable, resizable within smaller bounds, minimizable, and closable. Window geometry and visibility stay in localStorage; transcripts and credentials do not. The clock is decorative. Startup does not create Scout/Review drafts. Manual drafts are created only through **+ Subagent**, and remain NOT STARTED until Launch. Subagent display numbers are reusable labels, separate from UUID/session identity: closing releases a number, minimizing does not, and surviving agents keep their numbers. The server resolves conflicting draft reservations from different tabs.
 
-The background preserves the original idle field, uses curved flowing bands for thinking/busy activity, and upward bands for reported output. Output takes priority across connected manual agents and current-session extension children; tools/unknown busy work share the thinking pattern without claiming verified model reasoning. Settled/disconnected records do not animate as active work. Activity changes do not override any pause setting.
+The background vibrates gently while stopped, preserving the original idle field. When the model is thinking or producing output, the entire dithered field flows: thinking circulates it in a bounded orbit, output streams it up and down; the motion is a true translation of the whole pattern, so it is clearly visible rather than a subtle flicker. Output takes priority across connected manual agents and current-session extension children; tools/unknown busy work share the thinking flow without claiming verified model reasoning. Settled/disconnected records do not animate as active work. Activity changes do not override any pause setting.
 
-The background slowly flows at a capped ~12fps, with at most 100,000 drawing cells and a 2048px bitmap edge. Hidden tabs/pagehide, system reduced-motion settings and manual pause stop its animation timer. Use **? → Pause background motion** to pause; the preference persists across reloads. Reduced motion takes priority.
+The background animates at a capped ~12fps, with at most 100,000 drawing cells and a 2048px bitmap edge. Idle keeps its original slow shimmer; busy states translate the whole field along a bounded path whose amplitude scales with the canvas, so the cadence looks the same at any window size and the pattern never leaves the view. Hidden tabs/pagehide, system reduced-motion settings and manual pause stop its animation timer. Use **? → Pause background motion** to pause; the preference persists across reloads. Reduced motion takes priority.
 
 The usage diagram follows the last selected real agent window, retaining that selection while utility/draft windows are focused. It shows reported session input/output/cache tokens, total tokens, cost and context occupancy. Token bars share a scale relative to the largest category; cache combines read and write. Unknown values remain `—`, zero is shown as zero, and provisional active-turn tokens are separate rather than added again to session totals. Disconnects mark the last reported data as offline. Click the diagram heading for detailed Usage. It uses existing SSE snapshots, without polling, model prompts or estimated activity; on mobile it appears beneath the stacked windows.
 
@@ -35,11 +35,11 @@ Use the authenticated URL printed in Terminal. It binds to `127.0.0.1`, not all 
 
 Use **Windows ▾** or the taskbar to show a feature. Utility close/minimize hides it without discarding its inputs. The separate Window Manager utility has been removed. Title-bar controls, the taskbar and Arrange still manage windows. Hiding never stops an agent.
 
-Selecting a compact/default window through its title bar, taskbar or window controls automatically enlarges it once to a useful working size. Manually resized windows and legacy custom layouts take precedence; repeated selections never grow them again. Clicking a form field does not move controls under the pointer. Title-bar **↗** reapplies working-size zoom; **Arrange** resets geometry and the first-selection zoom state. Hiding/showing preserves position, size and main-window maximize/restore state. Temporary viewport constraints clamp only the visible rectangle, not the saved preference, so a mobile detour does not destroy the desktop layout. Reload retains geometry/visibility for existing live windows. Obsolete Scout/Review starter layout entries are removed; unsaved manual drafts are not restored.
+New visible windows automatically fit to a useful working size on opening, without an Auto-size button, title-bar fitting button or native sizing command. Hidden windows fit when shown. Auto-sized windows adapt when the native window or desktop container is resized. Manually adjusted windows and legacy custom layouts take precedence; repeated selections do not grow them. Clicking a form field does not move controls under the pointer. **Arrange** restores compact defaults; selecting/opening those windows fits them again. Hiding/showing preserves position, size and main-window maximize/restore state. Temporary viewport constraints clamp only the visible rectangle, not the saved preference, so a mobile detour does not destroy the desktop layout. Reload retains geometry/visibility for existing live windows. Obsolete Scout/Review starter layout entries are removed; unsaved manual drafts are not restored.
 
 Purpose-specific size presets (width × height, before viewport constraints):
 
-| Purpose | Initial | Working size ↗ |
+| Purpose | Compact / Arrange | Automatic working size |
 | --- | --- | --- |
 | Manual child | 325 × 310 | 460 × 510 |
 | Delegated observer | 560 × 430 | 800 × 660 |
@@ -52,7 +52,7 @@ Purpose-specific size presets (width × height, before viewport constraints):
 | Activity | 740 × 540 | 1020 × 760 |
 | Tools | 600 × 480 | 800 × 640 |
 
-Main retains its larger responsive layout (up to 1000 × 780 initially; working width up to 1100). Saved/manual rectangles take precedence over all presets.
+Main opens at its larger responsive working size (width up to 1100); compact/Arrange size is up to 1000 × 780. Children grow leftward from their right-side anchors, with height bounded by the space below each anchor. Saved/manual rectangles take precedence over presets. The native app also supports an explicitly requested, one-shot [window-layout reset](macos.md#reset-window-layout-only).
 
 | Window | Controls |
 | --- | --- |
@@ -85,6 +85,20 @@ Status is polled serially about every 1.5 seconds, with up to four child inspect
 
 Previews are capped at 32 children, 40 messages per child, 2,000 characters per message, 8,000-character final output, and roughly 256 KB of projected rows. Full results remain extension-owned. Only the current main session is observed; unrelated terminal jobs are not attached. Installed Pi 0.85.1 and pi-subagents 0.69.0 management/protocol behavior was checked without paid child execution.
 
+## Subagent inspection and retro dropdowns (local, unreleased)
+
+The development checkout adds a collapsed **Inspection** panel to manual child and delegated observer windows. Expand **Prompt**, **Tools**, **Files**, or **Usage + time**; output stays primary. Cumulative metric updates preserve section expansion, focus, scroll and window geometry, even when the output is unchanged. The inspector is display-only. Compact manual windows keep a reachable summary row and scroll the body if necessary, without enlarging saved geometry.
+
+- **Prompt:** assigned task where exposed, or the manual session's latest saved/delivered user text. Never queued-undelivered input, system instructions or hidden reasoning. Pi-subagents 0.69.0 redacts some foreground task fields; its `[prompt redacted]` marker is shown as unavailable. Async task previews can already be truncated upstream.
+- **Tools/files:** bounded recent calls and safe summaries, with unknown outcomes distinguished from success. Only exact-ID successful write/edit observations or explicit child-reported paths count as change evidence. Reported paths are not verified diffs; shared Git changes, shell strings and read paths are excluded. Cloned/hydrated manual history cannot establish current-child file changes.
+- **Usage/time:** reported child totals or explicitly labeled manual session totals. Missing values stay unavailable; zero stays zero. Status alone cannot turn cached progress counts into final billing. Async inspect/status often lacks tokens/cost. Time is reported duration or valid settled run endpoints, not a ticking estimate or last-activity timestamp. No workflow-wide usage is copied to each child.
+
+Inspection is limited to 8,000 prompt characters, 40 tool previews (600-character summaries), 64 paths (512 characters), and 24 KiB per DTO, inside the existing 256,000-byte delegation envelope. Credential-shaped text is redacted before clipping and again at display time. Unavailable v1 metadata in an older backend clears prior details instead of inventing values.
+
+Model, thinking, delivery and feature selectors now have square beveled gray/pink triggers **and themed open menus**, with local VT323 typography. Native select values and change handlers remain authoritative. Arrows/Home/End navigate, Enter/Space commits, Escape/Tab cancels tentative changes, typing searches, and pointer selection works. Menus are viewport-clamped and support long lists, disabled/empty states and dynamic reconstruction. Teardown restores the native fallback.
+
+This change is included in the rebuilt and tested [native auto-size follow-up](native-feature-audit.md), installed locally after explicit approval. The public v0.4 release artifact remains unchanged; the follow-up source lives on `main`. See [inspection-wave validation](validation.md#local-inspectioncombobox-acceptance-unreleased).
+
 ## Architecture
 
 - `desktop/server.mjs`: dependency-free Node HTTP server, static allowlist, authenticated command API, state snapshots over fetch-based SSE, command request IDs, and agent process ownership.
@@ -94,6 +108,8 @@ Previews are capped at 32 children, 40 messages per child, 2,000 characters per 
 - `desktop/extensions.mjs`: resolves only the already-installed `pi-subagents` package for main; explicit entry paths, no automatic installation or ambient extension enablement. Override with `PI_DESKTOP_SUBAGENTS_ROOT` (absolute package directory), or disable with `PI_DESKTOP_SUBAGENTS=0`. Load failures are reported rather than silently pretending tools are available.
 - `desktop/tools.mjs` and `subagent-slots.mjs`: strict runtime tool selection/read-only ceilings and reusable server-owned display numbers.
 - `desktop/delegation-bridge.mjs` and `delegations.mjs`: session/generation-correlated, bounded read-only extension bus/status/inspect bridge and child DTO. No arbitrary artifact-path reads, duplicate runners, or transcript writers. Private IPC coalesces backpressure; temporary provider keys are redacted before clipping and again at the server boundary.
+- `desktop/inspection.mjs`: bounded inspection DTO normalization, redaction, tool/file evidence, scoped usage and timing.
+- `desktop/public/inspection.js` and `combobox.js`: shared display-only inspector and native-select-backed themed menus; corresponding local styles are explicitly served and bundle-allowlisted.
 - `desktop/public/delegated.js`: automatic observer reconciliation, safe bounded rendering, close suppression and aggregate activity selection, separate from manual agent API targets.
 - `desktop/protocol.mjs`: streaming state reducer with event-derived thinking/output/tool/idle activity. `agent_end` is not considered settled; `agent_settled` handles retry/continuation completion. Tool partial results replace cumulative output rather than appending duplicates.
 - `desktop/public/`: vanilla modules, local CSS/font, Canvas stippling, accessible title-bar controls, window layout and conversation views. No CDN, bundler, React dependency, or public network service.
@@ -118,8 +134,10 @@ The SDK host sets `PI_OFFLINE=1`, creates its model runtime with network catalog
 ```bash
 npm test
 npm run test:terminal
-# Enable the feature-window real-DOM suite as part of the complete Node suite:
-CHROME_PATH='/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' PI_DESKTOP_FEATURE_BROWSER_TEST=1 npm test
+# Enable feature-window and inspection/combobox real-DOM suites:
+CHROME_PATH='/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' PI_DESKTOP_FEATURE_BROWSER_TEST=1 PI_COMBOBOX_BROWSER_TEST=1 npm test
+# Isolated WKWebView components; does not launch/restart Pi Dither.app:
+npm run test:webkit
 # Integrated desktop browser suite:
 CHROME_PATH='/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' npm run test:browser
 ```
@@ -128,7 +146,10 @@ CHROME_PATH='/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' npm
 
 Completed checks:
 
-- Latest starter-removal/right-side placement follow-up: **102/102** Node/real-DOM checks passed without skips, plus the integrated fixture and isolated real-Pi browsers (no model prompts or saved-conversation changes). Startup/reload no longer create empty children; explicit manual drafts, observer anchoring, old-default migration, custom layout preservation and freed-position reuse across reload are covered.
+- Latest local native sizing/feature audit: **134/134** Node/real-DOM checks, integrated Chromium, isolated WKWebView, four terminal scenarios, and a rebuilt relocated app through direct/Finder launches passed. Includes responsive automatic sizing, protected manual geometry, hide/reopen, Reload with lost cached auth, and the idle/thinking/output background field. See the [feature-by-feature audit](native-feature-audit.md); the follow-up source is published on `main`, but no new release artifact exists.
+
+- Local inspection/combobox follow-up: **129/129** Node/real-DOM checks, integrated synthetic desktop browser, isolated WKWebView at 390px and 1440px, and four terminal PTY scenarios passed. No provider prompts, installed-app restart or deployment. See [validation](validation.md) for limitations.
+- Historical starter-removal/right-side placement follow-up: **102/102** Node/real-DOM checks passed without skips, plus the integrated fixture and isolated real-Pi browsers (no model prompts or saved-conversation changes). Startup/reload no longer create empty children; explicit manual drafts, observer anchoring, old-default migration, custom layout preservation and freed-position reuse across reload are covered.
 - Live-window integration milestone: 99/99 Node/real-DOM checks passed without skips. Added delegation status/inspect and live-tail fixtures, stable workflow identities and materializing first-child regression, bounded/redacted projections, timeout/disposal and stale-generation coverage, observer close/minimize/reload behavior, activity precedence, unchanged idle-pattern goldens, and distinct window preset/layout tests. Credential-free installed-package probes check actual status/inspect handlers, zero prompt insertion, new-session reset, and preserved empty tool selection. The integrated fixture browser checks automatic windows, live cumulative replacement, final/error state, telemetry notices, no duplicate process/API calls, safe rendering, close suppression, parent replacement and distinct sizes.
 - Previous extension milestone: 72 tests passed with the opt-in browser flag: terminal/API/Markdown/window-engine baselines, usage diagrams, feature-controller and real-DOM checks, Git/activity/control races, 11 backdrop lifecycle tests, tool selection/IPC/real-Pi lifecycle checks, and reusable slot allocation/API tests. The four extension regressions cover local/disabled/missing discovery, entry provenance and child ceilings, visible/hidden custom messages and safe notifications, plus the installed extension's RPC defaults and none/subset persistence across new/clone/resume. A separate credential-free SDK process executes the actual installed `subagent` management/list tool without launching a child or calling a model. Settings/credential bytes remain unchanged. Without the browser flag, that one real-DOM test is explicitly skipped; the installed-extension regression also explicitly skips if the package is absent.
 - Browser fixture: real 1440×960 rendering; token removal; largest-main hierarchy; pointer drag; keyboard resize; minimize/taskbar restore; Arrange; explicit subagent launch with a selected tool subset; main extension-tool visibility and explicit selection; no delegation option in read-only child catalogs; none/all/subset Apply without prompts; unavailable-metadata guard; closed-number reuse and hidden-slot occupancy; no legacy manager shell; evolving/paused/reduced-motion Canvas and persisted pause; safe hostile-text rendering; unsent handoff; clickable usage diagram and selected-agent telemetry; auto-zoom; hide/show/reload layout preservation; 390px mobile layout without horizontal overflow or loss of desktop preferences; no frontend exceptions/resource/CSP errors.

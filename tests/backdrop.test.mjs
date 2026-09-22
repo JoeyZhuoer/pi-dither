@@ -329,7 +329,33 @@ test('idle pixels exactly match the original animation', () => {
   }
 });
 
-test('activity patterns are deterministic, distinct and gently moving in the same palette', () => {
+// Exact cell membership, including the sparse sub-pixel lattice dots.
+function inked(frame, x, y) {
+  for (const cell of frame.cells) if (cell.startsWith(`${x},${y},`)) return true;
+  return false;
+}
+function changedCells(before, after) {
+  let changed = 0;
+  for (const cell of before.cells) if (!after.cells.has(cell)) changed++;
+  for (const cell of after.cells) if (!before.cells.has(cell)) changed++;
+  return changed;
+}
+// Whole-cell translations must reproduce the previous frame exactly: busy
+// fields are rigid, so their motion is a true translation, not just flicker.
+function assertTranslated(before, after, dx, dy, label) {
+  let compared = 0, inkedCount = 0;
+  for (let x = 0; x < before.width; x++) for (let y = 0; y < before.height; y++) {
+    const sourceX = x + dx, sourceY = y + dy;
+    if (sourceX < 0 || sourceY < 0 || sourceX >= before.width || sourceY >= before.height) continue;
+    compared++;
+    if (inked(before, sourceX, sourceY)) inkedCount++;
+    assert.equal(inked(after, x, y), inked(before, sourceX, sourceY), `${label} pixel ${x},${y} is translated exactly`);
+  }
+  assert.ok(inkedCount > 200, `${label} translated region carries ink`);
+  assert.ok(compared > before.width * before.height * .5, `${label} translation covers most of the window`);
+}
+
+test('activity patterns are deterministic and spatially distinct in the same palette', () => {
   const f = fixture(), snapshots = [];
   for (const mode of ['idle', 'thinking', 'output']) {
     drawBackdrop(f.canvas, 12, mode);
@@ -340,15 +366,33 @@ test('activity patterns are deterministic, distinct and gently moving in the sam
     drawBackdrop(f.canvas, 12 + 1 / 12, mode);
     const next = f.frames.at(-1);
     assert.notDeepEqual(next.cells, first.cells);
-    const changed = [...first.cells].filter(cell => !next.cells.has(cell)).length
-      + [...next.cells].filter(cell => !first.cells.has(cell)).length;
-    assert.ok(changed / (first.width * first.height) < .02);
     assert.equal(next.color, '#20201f');
   }
   for (let i = 0; i < snapshots.length; i++) for (let j = i + 1; j < snapshots.length; j++) {
     const changed = [...snapshots[i].cells].filter(cell => !snapshots[j].cells.has(cell)).length;
     assert.ok(changed > 100, 'modes have measurably different spatial patterns');
   }
+});
+
+test('idle vibrates in place while busy fields flow as one exact translation', () => {
+  const f = fixture();
+  const frameAt = (time, mode) => { drawBackdrop(f.canvas, time, mode); return f.frames.at(-1); };
+  // The stopped field keeps its original slow shimmer: tiny per-frame change.
+  const idleBefore = frameAt(40, 'idle');
+  const accumulate = (mode) => { let changed = 0; for (let i = 0; i < 6; i++) changed += changedCells(frameAt(7 + i / 12, mode), frameAt(7 + (i + 1) / 12, mode)); return changed; };
+  const idleMoved = accumulate('idle');
+  assert.ok(idleMoved / (idleBefore.width * idleBefore.height * 6) < .02, 'idle only shimmers in place');
+  // Busy fields sweep the whole dither, not just a few flickering pixels.
+  for (const mode of ['thinking', 'output']) assert.ok(accumulate(mode) > idleMoved * 4, `${mode} visibly moves the whole field`);
+  // Fixture bitmap is 160x100, so amplitudes round to whole cells. Whole-cell
+  // offsets must reproduce the previous frame exactly at any pair of times.
+  assertTranslated(frameAt(0, 'output'), frameAt(1.5, 'output'), 0, 13, 'output rise');
+  assertTranslated(frameAt(0, 'output'), frameAt(4.5, 'output'), 0, -13, 'output return');
+  assertTranslated(frameAt(0, 'thinking'), frameAt(1.75, 'thinking'), 10, 10, 'thinking wander');
+  assertTranslated(frameAt(0, 'thinking'), frameAt(5.25, 'thinking'), -10, -8, 'thinking return');
+  // The path stays bounded and on canvas.
+  assert.ok(frameAt(4.5, 'output').cells.size > 200, 'output field stays on canvas');
+  assert.ok(frameAt(5.25, 'thinking').cells.size > 200, 'thinking field stays on canvas');
 });
 
 test('activity transitions coalesce, normalize invalid modes and never schedule extra work', () => {

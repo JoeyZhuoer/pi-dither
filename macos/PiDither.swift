@@ -19,8 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     var smokeTimer: Timer?
     var dataDirectory: URL!
     let smoke = ProcessInfo.processInfo.arguments.contains("--smoke-test")
+    let resetWindowLayout = ProcessInfo.processInfo.arguments.contains("--reset-window-layout")
+    var layoutResetScripts: [WKUserScript] = []
     var smokePassed = false
     var smokeFailure = false
+    var smokeReloading = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
@@ -42,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         window.delegate = self
         window.isReleasedWhenClosed = false
         if !smoke {
+            if resetWindowLayout { NSWindow.removeFrame(usingName: "PiDitherMain") }
             if !window.setFrameUsingName("PiDitherMain") { window.center() }
             window.setFrameAutosaveName("PiDitherMain")
         } else { window.center() }
@@ -77,7 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Pi Dither", .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "", .credits: NSAttributedString(string: "A dithered workspace for core Pi.\nCore Pi and pi-subagents retain their own execution policies.\nLocal build: ad-hoc signed, not notarized.")])
     }
     @objc func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-    @objc func reload() { if let url = localURL { webView.load(URLRequest(url: url)) } }
+    @objc func reload() {
+        guard let url = localURL, var target = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        // The UI removes its token fragment. Loading the bootstrap URL again can
+        // become a same-document fragment navigation in WKWebView, not a reload.
+        // A nonsecret nonce forces a full load and reboots auth even if storage
+        // was lost; app.js strips both nonce and fragment immediately afterward.
+        target.queryItems = [URLQueryItem(name: "reload", value: UUID().uuidString)]
+        if let refreshed = target.url { webView.load(URLRequest(url: refreshed, cachePolicy: .reloadIgnoringLocalCacheData)) }
+    }
     @objc func openData() { if let url = dataDirectory { NSWorkspace.shared.open(url) } }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showWindow(); return true }
     func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); return false }
@@ -137,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 guard let raw = value["url"] as? String, let url = URL(string: raw), url.scheme == "http", url.host == "127.0.0.1", let port = url.port, port > 0, port < 65536,
                       url.path == "/", url.user == nil, url.password == nil, url.query == nil, url.fragment?.hasPrefix("token=") == true else { fail("Invalid local workspace address."); return }
                 startupTimer?.invalidate(); localURL = url
+                if resetWindowLayout { prepareLayoutReset(port: port) }
                 webView.load(URLRequest(url: url))
             case "status":
                 guard waitingToQuit && !shuttingDown else { continue }
@@ -235,7 +248,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); field.stringValue = defaultText ?? ""; alert.accessoryView = field
         completionHandler(alert.runModal() == .alertSecondButtonReturn ? field.stringValue : nil)
     }
+    // Explicit one-shot maintenance only. Never clear a whole website store:
+    // credentials, sessions, workspace and motion settings are not layout data.
+    func prepareLayoutReset(port: Int) {
+        var sources: [String] = []
+        if smoke {
+            // Seed stale geometry plus unrelated preferences in the ephemeral
+            // fixture store, proving a selective reset rather than an empty one.
+            sources.append("""
+            localStorage.setItem('pi-desktop:layout:v1', JSON.stringify({main:{x:0,y:0,w:650,h:440,sizeMode:'manual',zoomed:true},models:{x:0,y:0,w:500,h:450,hidden:false,sizeMode:'manual',zoomed:true}}));
+            localStorage.setItem('pi-desktop:motion:v1','paused');
+            localStorage.setItem('pi-dither:smoke-keep','retained');
+            sessionStorage.setItem('pi-desktop:delegated-closed:v1:fixture','["old"]');
+            sessionStorage.setItem('pi-dither:smoke-keep','retained');
+            """)
+        }
+        sources.append("""
+        try {
+          localStorage.removeItem('pi-desktop:layout:v1');
+          for (let i=sessionStorage.length-1;i>=0;i--) {
+            const key=sessionStorage.key(i);
+            if (key?.startsWith('pi-desktop:delegated-closed:v1:')) sessionStorage.removeItem(key);
+          }
+          window.piDitherLayoutResetOK=true;
+        } catch { window.piDitherLayoutResetOK=false; }
+        """)
+        for source in sources {
+            let script = WKUserScript(source: "if(location.origin==='http://127.0.0.1:\(port)'){" + source + "}", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            layoutResetScripts.append(script); webView.configuration.userContentController.addUserScript(script)
+        }
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if !layoutResetScripts.isEmpty, let url = webView.url, url.scheme == "http", allowed(url) {
+            let controller = webView.configuration.userContentController
+            let retained = controller.userScripts.filter { script in !layoutResetScripts.contains(where: { $0 === script }) }
+            controller.removeAllUserScripts(); retained.forEach { controller.addUserScript($0) }; layoutResetScripts.removeAll()
+            webView.evaluateJavaScript("window.piDitherLayoutResetOK === true") { result, _ in
+                guard result as? Bool == true else { self.fail("Window layout preferences could not be reset."); return }
+                print("PASS: window layout reset; unrelated preferences retained."); fflush(stdout)
+            }
+        }
         guard smoke, localURL != nil, !smokePassed, smokeTimer == nil else { return }
         var attempts = 0
         smokeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -243,11 +295,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             self.webView.evaluateJavaScript("document.querySelector('.main-window .send')?.disabled === false && document.querySelectorAll('[data-subagent-index]').length === 0 && location.hash === '' && document.title.includes('Pi Dither')") { result, error in
                 if let ok = result as? Bool, ok {
                     self.smokeTimer?.invalidate()
-                    let check = "const s=await (await fetch('/api/state',{headers:{Authorization:'Bearer '+sessionStorage.getItem('pi-desktop:token')}})).json(); const a=s.agents[0]; await document.fonts.ready; return s.agents.length===1 && s.desktopVersion==='0.4.0' && a.kind==='main' && a.connected && a.messages.length===0 && a.phase==='idle' && a.extensionStatus.status==='loaded' && a.activeTools.includes('subagent') && a.activeTools.includes('subagent_supervisor');"
-                    self.webView.callAsyncJavaScript(check, arguments: [:], in: nil, in: .page) { result in
-                        if case .success(let value) = result, value as? Bool == true { self.smokePassed = true }
-                        else { print("Native bundled-runtime/API check failed"); self.smokeFailure = true }
-                        self.shutdown()
+                    guard let file = Bundle.main.resourceURL?.appendingPathComponent("validation/SmokeChecks.js"),
+                          let checks = try? String(contentsOf: file, encoding: .utf8) else {
+                        self.smokeFailure = true; self.shutdown(); return
+                    }
+                    self.webView.evaluateJavaScript(checks) { _, error in
+                        if error != nil { self.smokeFailure = true; self.shutdown() }
+                        else { self.runSmokeStage(self.smokeReloading ? "reloaded" : "initial") }
                     }
                 } else if attempts > 100 {
                     self.smokeTimer?.invalidate()
@@ -255,6 +309,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                         print("Native DOM: \(detail ?? "unavailable")"); self.smokeFailure = true; self.shutdown()
                     }
                 }
+            }
+        }
+    }
+    func runSmokeStage(_ stage: String) {
+        guard smoke, !shuttingDown else { return }
+        print("Native fixture stage: " + stage); fflush(stdout)
+        webView.callAsyncJavaScript("return await piDitherSmoke(stage)", arguments: ["stage": stage], in: nil, in: .page) { result in
+            guard case .success(let value) = result, value as? Bool == true else {
+                var detail = "JavaScript check failed"
+                if case .failure(let error) = result,
+                   let message = (error as NSError).userInfo["WKJavaScriptExceptionMessage"] as? String {
+                    detail = message.replacingOccurrences(of: "token=[^\\s&]+", with: "token=[redacted]", options: .regularExpression)
+                }
+                print("Native feature check failed at " + stage + ": " + String(detail.prefix(300)))
+                self.smokeFailure = true; self.shutdown(); return
+            }
+            let next: (String, NSSize)?
+            switch stage {
+            case "initial": next = ("minimum", NSSize(width: 800, height: 600))
+            case "minimum": next = ("narrow", NSSize(width: 980, height: 740))
+            case "narrow": next = ("wide", NSSize(width: 1440, height: 940))
+            case "wide": next = ("manual-narrow", NSSize(width: 980, height: 740))
+            case "manual-narrow": next = ("manual-wide", NSSize(width: 1440, height: 940))
+            case "manual-wide":
+                // Hide/reopen and Reload must not replace the native-owned session.
+                _ = self.windowShouldClose(self.window)
+                guard !self.window.isVisible, self.process?.isRunning == true else {
+                    self.smokeFailure = true; self.shutdown(); return
+                }
+                _ = self.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+                guard self.window.isVisible else { self.smokeFailure = true; self.shutdown(); return }
+                print("Native fixture: reloading interface"); fflush(stdout)
+                self.smokeReloading = true; self.smokeTimer = nil; self.reload()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                    if !self.shuttingDown && !self.smokePassed && self.smokeTimer == nil {
+                        print("Native reload did not complete navigation"); self.smokeFailure = true; self.shutdown()
+                    }
+                }
+                return
+            default: next = nil
+            }
+            if let (name, size) = next {
+                self.window.setContentSize(size)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.runSmokeStage(name) }
+            } else {
+                print("PASS: native feature checks — eight utilities, auto-size/native resize, manual layouts, maximize, draft controls, menus, motion, hide/reopen, Reload and unchanged conversation.")
+                self.smokePassed = true; self.shutdown()
             }
         }
     }

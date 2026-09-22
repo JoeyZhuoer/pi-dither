@@ -1,3 +1,4 @@
+import { normalizeInspection, resultInspection, snapshotInspection, inspectReplyInspection, stopInspection, inspectionText } from './inspection.mjs';
 import { createHash } from 'node:crypto';
 
 export const DELEGATION_LIMITS = Object.freeze({ rows: 32, messages: 40, text: 8000, bytes: 256_000 });
@@ -17,10 +18,11 @@ export const delegationId = (sessionId, source, runId, childId) => `delegate:${c
 // paths, tool arguments, thinking blocks, or credential-bearing metadata escape.
 export function safeDelegationText(value, redact = (x) => x, limit = DELEGATION_LIMITS.text) {
   if (typeof value !== 'string') return '';
-  return redact(value).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, limit);
+  return inspectionText(value, redact, limit);
 }
 export function sanitizeDelegations(rows, redact = (x) => x) {
-  let bytes = 0, omitted = Math.max(0, list(rows).length - DELEGATION_LIMITS.rows);
+  // Reserve envelope/status space, including worst-case JSON escaping.
+  let bytes = 8192, omitted = Math.max(0, list(rows).length - DELEGATION_LIMITS.rows);
   const result = [];
   for (const row of list(rows).slice(0, DELEGATION_LIMITS.rows)) {
     if (!row || !identity(row.id) || !identity(row.runId) || typeof row.childId !== 'string') { omitted++; continue; }
@@ -28,13 +30,14 @@ export function sanitizeDelegations(rows, redact = (x) => x) {
     const clean = { id: text(row.id, 256), runId: text(row.runId, 256), childId: text(row.childId, 256), name: text(row.name, 160),
       source: row.source === 'async' ? 'async' : 'foreground', status: statusOf(row.status),
       phase: ['idle', 'thinking', 'output', 'tool', 'unknown'].includes(row.phase) ? row.phase : 'unknown',
+      inspection: normalizeInspection(row.inspection, redact),
       task: text(row.task, 2000), messages: list(row.messages).slice(-DELEGATION_LIMITS.messages).map((m, i) => ({
         id: text(m?.id, 256) || `m${i}`, role: ['user', 'assistant', 'tool'].includes(m?.role) ? m.role : 'assistant',
         text: text(m?.text, 2000), ...(m?.name ? { name: text(m.name, 160) } : {}),
         ...(m?.status ? { status: text(m.status, 40) } : {}),
       })), finalOutput: text(row.finalOutput), error: text(row.error, 2000),
       updatedAt: Number.isFinite(row.updatedAt) && row.updatedAt >= 0 ? row.updatedAt : 0 };
-    const size = Buffer.byteLength(JSON.stringify(clean));
+    const size = Buffer.byteLength(JSON.stringify(clean)) + 1;
     if (bytes + size > DELEGATION_LIMITS.bytes) { omitted++; continue; }
     bytes += size; result.push(clean);
   }
@@ -45,7 +48,7 @@ export class DelegationProjection {
   constructor(sessionId, redact = (x) => x) { this.sessionId = sessionId; this.redact = redact; this.rows = new Map(); this.calls = new Map(); this.routes = new Map(); this.omitted = 0; this.available = false; this.message = 'Discovering delegation telemetry.'; }
   unavailable(message = 'Delegation telemetry unavailable.') {
     this.available = false; this.message = message;
-    for (const row of this.rows.values()) if (['queued', 'running'].includes(row.status)) { row.status = 'unknown'; row.phase = 'unknown'; }
+    for (const row of this.rows.values()) if (['queued', 'running'].includes(row.status)) { row.status = 'unknown'; row.phase = 'unknown'; row.inspection = stopInspection(row.inspection); }
   }
   put(row) {
     const id = delegationId(this.sessionId, row.source, row.runId, row.childId);
@@ -68,6 +71,7 @@ export class DelegationProjection {
       for (const row of this.rows.values()) if (row.source === 'foreground' && row.runId === runId && !terminal(row.status)) {
         row.status = event.isError ? 'failed' : 'unknown'; row.phase = event.isError ? 'idle' : 'unknown';
         row.error = event.isError ? 'Delegation tool failed before reporting child results.' : '';
+        row.inspection = stopInspection(row.inspection);
       }
       return;
     }
@@ -97,6 +101,7 @@ export class DelegationProjection {
       this.put({ runId: details.runId, childId: String(row.index), source: 'foreground', name: row.agent || progress.agent || 'Delegate',
         status, phase: terminal(status) ? 'idle' : progress.currentTool ? 'tool' : outputChanged ? 'output' : 'unknown', task: row.task || progress.task,
         messages, finalOutput: end ? row.finalOutput : '', error: row.error || progress.error,
+        inspection: resultInspection(row, { status, redact: this.redact, previous: previous?.inspection }),
         updatedAt: Date.now() });
     }
   }
@@ -110,6 +115,7 @@ export class DelegationProjection {
       const status = statusOf(child.state), previous = this.rows.get(id);
       this.put({ ...previous, runId: details.runId, childId: child.childId, source: 'foreground', name: child.agent || child.childId,
         status, phase: terminal(status) ? 'idle' : child.activity?.currentTool ? 'tool' : 'unknown',
+        inspection: resultInspection(result, { status, redact: this.redact, previous: previous?.inspection, activity: child.activity }),
         ...(result ? { task: result.task, error: result.error, ...(end ? { finalOutput: result.finalOutput || textOf(list(result.messages).findLast((m) => m?.role === 'assistant')?.content, this.redact) } : {}) } : {}), updatedAt: Date.now() });
       // Only package-supplied exact run identities; never infer a workflow child
       // index from its visible position (snapshots can omit/reorder children).
@@ -129,6 +135,8 @@ export class DelegationProjection {
     if (snapshot?.kind !== 'pi-subagents.async-status-snapshot' || snapshot.version !== 1 || !Array.isArray(snapshot.runs)) {
       this.unavailable('Unsupported delegation status snapshot.'); return false;
     }
+    if (Number.isFinite(snapshot.generatedAt) && snapshot.generatedAt < (this.snapshotTime ?? 0)) return true;
+    if (Number.isFinite(snapshot.generatedAt)) this.snapshotTime = snapshot.generatedAt;
     this.available = true; this.message = '';
     this.snapshotOmitted = Math.max(0, Number(snapshot.omitted?.runs) || 0) + Math.max(0, Number(snapshot.omitted?.children) || 0) + (snapshot.omitted?.byteLimitExceeded ? 1 : 0);
     const seen = new Set(); let visited = 0;
@@ -143,7 +151,9 @@ export class DelegationProjection {
         const childId = runNode ? '' : node.id;
         seen.add(delegationId(this.sessionId, 'async', root, childId));
         const status = statusOf(node.state);
+        const previous = this.rows.get(delegationId(this.sessionId, 'async', root, childId));
         this.put({ runId: root, childId, source: 'async', name: node.label || 'Delegate', status,
+          inspection: snapshotInspection(node, previous?.inspection, this.redact),
           phase: terminal(status) ? 'idle' : node.activity?.currentTool ? 'tool' : 'unknown', updatedAt: node.updatedAt ?? snapshot.generatedAt ?? Date.now() });
       }
       for (const child of children.slice(0, 32)) visit(child, root, depth + 1);
@@ -151,7 +161,7 @@ export class DelegationProjection {
     for (const root of snapshot.runs.slice(0, 32)) if (identity(root?.id)) visit(root, root.id);
     // Absence is not proof of completion: snapshots may omit or age out records.
     for (const row of this.rows.values()) if (row.source === 'async' && !seen.has(row.id) && !terminal(row.status)) {
-      row.status = 'unknown'; row.phase = 'unknown';
+      row.status = 'unknown'; row.phase = 'unknown'; row.inspection = stopInspection(row.inspection);
     }
     return true;
   }
@@ -170,13 +180,13 @@ export class DelegationProjection {
     const output = visibleOutput(messages, this.redact);
     const outputChanged = output && output !== visibleOutput(row.messages, this.redact);
     if (live && !terminal(row.status)) messages.push(live);
-    this.put({ ...row, task: reply.task ?? row.task, messages, finalOutput: reply.finalOutput ?? '', error: '',
+    this.put({ ...row, inspection: inspectReplyInspection(reply, row.inspection, this.redact), task: reply.task ?? row.task, messages, finalOutput: reply.finalOutput ?? '', error: '',
       phase: !terminal(row.status) && row.phase !== 'tool' && outputChanged ? 'output' : row.phase, updatedAt: Date.now() });
     return true;
   }
   snapshot() {
-    const { rows, omitted } = sanitizeDelegations([...this.rows.values()]);
-    return { delegations: rows, delegationStatus: { available: this.available, message: this.message,
+    const { rows, omitted } = sanitizeDelegations([...this.rows.values()], this.redact);
+    return { delegations: rows, delegationStatus: { available: this.available, message: safeDelegationText(this.message, this.redact, 1000),
       omitted: Math.min(Number.MAX_SAFE_INTEGER, this.omitted + (this.snapshotOmitted || 0) + omitted) } };
   }
 }

@@ -74,7 +74,7 @@ class Element extends Events {
   hasPointerCapture(id) { return this.captures.has(id); }
   releasePointerCapture(id) { this.captures.delete(id); }
 }
-const originalGlobals = Object.fromEntries(['document', 'window', 'localStorage', 'matchMedia'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+const originalGlobals = Object.fromEntries(['document', 'window', 'localStorage', 'matchMedia', 'ResizeObserver'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 function fixture(t, raw = null, denied = false) {
   const doc = { createElement: (tag) => new Element(tag, doc), activeElement: null };
   let stored = raw;
@@ -106,7 +106,7 @@ test('named purpose presets give distinct compact and working sizes without capp
     working.add(`${win.rect.w},${win.rect.h}`);
     const target = { ...win.rect };
     manager.place(win, { ...win.rect, w: 410, h: 330 });
-    button(win, 'Zoom to working size').emit('click');
+    manager.arrange(); manager.show(id);
     assert.equal(win.rect.w, target.w); assert.equal(win.rect.h, target.h);
   }
   assert.equal(compact.size, ids.length); assert.equal(working.size, ids.length);
@@ -133,7 +133,7 @@ test('delegated observers use former starter right-side anchors and migrate only
     const anchor = manager.legacyDefaultRect('subagent', index);
     assert.equal(win.rect.y, anchor.y);
     assert.equal(win.rect.x + win.rect.w, anchor.x + anchor.w);
-    assert.equal(win.rect.w, 560, 'position changes do not shrink observer preset');
+    assert.equal(win.rect.w, win.element.hidden ? 560 : 800, 'visible observers fit automatically, hidden ones wait for opening');
   }
   assert.equal(a.element.hidden, true);
   assert.equal(f.stored.second.observerIndex, 1);
@@ -259,8 +259,72 @@ test('DesktopWindows auto-zooms defaults once and preserves manual sizing over h
   manager.hide('models');
   const restored = new DesktopWindows(desktop, tasks); addMain(restored); const reopened = addUtility(restored);
   assert.equal(reopened.element.hidden, true); restored.show('models'); assert.deepEqual(reopened.rect, adjusted);
-  button(reopened, 'Zoom to working size').emit('click'); assert.ok(reopened.rect.w > adjusted.w);
   restored.arrange(); assert.equal(reopened.zoomed, false); restored.show('models'); assert.ok(reopened.rect.w > before.w);
+});
+
+test('auto-sized windows recover from a narrow native viewport and retain their mode through reload', (t) => {
+  const f = fixture(t), { manager, desktop, tasks, browser } = f;
+  desktop.clientWidth = 800; desktop.clientHeight = 600;
+  addMain(manager); const models = addUtility(manager);
+  manager.show(models.id); const narrow = { ...models.rect };
+  assert.equal(models.sizeMode, 'auto'); assert.equal(f.stored.models.sizeMode, 'auto');
+  desktop.clientWidth = 1440; desktop.clientHeight = 940; browser.emit('resize');
+  assert.ok(models.rect.w > narrow.w && models.rect.h > narrow.h, 'one-time fitting must not pin the narrow dimensions');
+  assert.equal(models.rect.w, 940); assert.equal(models.rect.h, 700);
+  const preferred = { ...models.layoutRect }, focused = manager.focused;
+  manager.hide(models.id); desktop.clientWidth = 900; browser.emit('resize');
+  assert.equal(models.element.hidden, true); assert.notEqual(manager.focused, models);
+  assert.deepEqual(models.layoutRect, preferred, 'resize leaves the preferred position intact');
+  manager.destroy(); const restored = new DesktopWindows(desktop, tasks); addMain(restored);
+  const copy = addUtility(restored); assert.equal(copy.element.hidden, true); assert.equal(copy.sizeMode, 'auto');
+  desktop.clientWidth = 1440; restored.resize(); restored.show(copy.id); assert.equal(copy.rect.w, 940);
+  assert.equal(focused, models); restored.destroy();
+});
+
+test('Arrange restores automatic fitting on selection; manual overrides, maximize restore and mobile remain safe', (t) => {
+  const f = fixture(t, JSON.stringify({ main: { x: 35, y: 25, w: 700, h: 500, zoomed: true } }));
+  const { manager, desktop, browser } = f; const main = addMain(manager);
+  manager.show('main'); assert.equal(main.rect.w, 700); assert.equal(main.sizeMode, 'manual');
+  manager.arrange(); manager.show('main'); assert.equal(main.sizeMode, 'auto'); assert.ok(main.rect.w > 700);
+  button(main, 'Maximize or restore main window').emit('click'); assert.equal(main.restoreMode, 'auto');
+  desktop.clientWidth = 1000; desktop.clientHeight = 700; browser.emit('resize');
+  button(main, 'Maximize or restore main window').emit('click');
+  assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 760);
+  manager.place(main, { x: 20, y: 30, w: 650, h: 480 }); manager.save();
+  const preferred = { ...main.layoutRect }; desktop.clientWidth = 1400; browser.emit('resize');
+  assert.deepEqual(main.rect, preferred); assert.equal(main.sizeMode, 'manual');
+  globalThis.matchMedia = () => ({ matches: true }); desktop.clientWidth = 390; browser.emit('resize');
+  assert.equal(manager.autoSize(), false); assert.deepEqual(main.layoutRect, preferred);
+  globalThis.matchMedia = () => ({ matches: false }); desktop.clientWidth = 1400; browser.emit('resize');
+  assert.deepEqual(main.rect, preferred); manager.arrange(); manager.show('main'); assert.equal(main.sizeMode, 'auto');
+  manager.arrange(); assert.equal(main.sizeMode, 'compact'); assert.equal(main.zoomed, false);
+});
+
+test('maximized auto-sized windows retain restore intent across reload', (t) => {
+  const { manager, desktop, tasks } = fixture(t); const main = addMain(manager);
+  manager.autoSize(main); button(main, 'Maximize or restore main window').emit('click');
+  manager.destroy(); desktop.clientWidth = 1000; desktop.clientHeight = 700;
+  const next = new DesktopWindows(desktop, tasks), copy = addMain(next);
+  assert.equal(copy.restoreMode, 'auto'); assert.ok(copy.restore);
+  button(copy, 'Maximize or restore main window').emit('click');
+  assert.equal(copy.sizeMode, 'auto'); assert.equal(copy.rect.w, 760);
+  desktop.clientWidth = 1400; next.resize(); assert.equal(copy.rect.w, 1064);
+  next.destroy();
+});
+
+test('desktop ResizeObserver handles native container changes without window events and disposes cleanly', (t) => {
+  let observer;
+  globalThis.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; observer = this; }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = true; }
+  };
+  const { manager, desktop, browser } = fixture(t); addMain(manager);
+  const models = addUtility(manager); manager.show(models.id);
+  assert.equal(observer.target, desktop); const before = models.rect.w;
+  desktop.clientWidth = 900; observer.callback(); assert.ok(models.rect.w < before);
+  desktop.clientWidth = 1400; observer.callback(); assert.equal(models.rect.w, before);
+  manager.destroy(); assert.equal(observer.disconnected, true); assert.equal(browser.listeners.get('resize').size, 0);
 });
 
 test('DesktopWindows viewport clamping never overwrites preferred geometry, including hidden and mobile windows', (t) => {
@@ -305,7 +369,9 @@ test('DesktopWindows form interaction does not move controls under the pointer',
   const { manager, doc } = fixture(t); const main = addMain(manager), initial = { ...main.rect };
   const input = doc.createElement('input'); main.body.append(input);
   main.element.emit('pointerdown', { target: input }); input.focus(); assert.deepEqual(main.rect, initial);
-  main.titlebar.focus(); assert.ok(main.rect.w > initial.w, 'explicit title selection enlarges the window');
+  assert.equal(main.sizeMode, 'auto', 'a new visible main fits before any interaction');
+  main.titlebar.focus(); assert.deepEqual(main.rect, initial, 'already-fitted windows do not grow again');
+  assert.equal(button(main, 'Zoom to working size'), undefined, 'no separate fitting button');
 });
 
 test('DesktopWindows validates corrupt, non-object, oversized and denied localStorage', (t) => {

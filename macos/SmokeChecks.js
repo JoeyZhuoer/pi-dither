@@ -1,0 +1,119 @@
+// Loaded into a nonpersistent WKWebView only by --smoke-test. No provider prompts.
+async function piDitherSmoke(stage) {
+  const check = (ok, message) => { if (!ok) throw new Error(message); };
+  const wait = async predicate => {
+    for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 40)); }
+    throw new Error('Native feature condition did not settle');
+  };
+  const $ = selector => document.querySelector(selector);
+  const main = $('.main-window');
+  const width = () => main.getBoundingClientRect().width;
+  const saved = () => JSON.parse(localStorage.getItem('pi-desktop:layout:v1'));
+  const state = async () => {
+    const response = await fetch('/api/state', { headers: { Authorization: 'Bearer ' + sessionStorage.getItem('pi-desktop:token') } });
+    check(response.ok, 'authenticated state'); return response.json();
+  };
+  if (stage === 'initial') {
+    await document.fonts.ready;
+    const s = await state(), a = s.agents[0];
+    check(s.agents.length === 1 && s.desktopVersion === '0.4.0' && a.kind === 'main' && a.connected && a.phase === 'idle' && a.messages.length === 0, 'idle sole main');
+    check(a.extensionStatus.status === 'loaded' && a.activeTools.includes('subagent') && a.activeTools.includes('subagent_supervisor'), 'bundled extension tools');
+    check(!location.hash && document.querySelectorAll('[data-subagent-index]').length === 0, 'no startup drafts or visible auth fragment');
+    check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');
+    check(saved().main.sizeMode === 'auto' && width() > 650, 'main fits automatically before interaction');
+    check($('#backdrop').dataset.activity === 'idle', 'background reports idle activity while the model is stopped');
+    check($('#backdrop').dataset.running === String($('#background-motion').getAttribute('aria-pressed') !== 'true'), 'animation follows the motion preference');
+    if (window.piDitherLayoutResetOK) {
+      check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained', 'unrelated storage retained');
+      check(localStorage.getItem('pi-desktop:motion:v1') === 'paused', 'motion setting retained');
+      check(!sessionStorage.getItem('pi-desktop:delegated-closed:v1:fixture') && $('[data-window-id="models"]').hidden, 'old observer dismissal and visibility cleared');
+    }
+    check($('#usage-diagram').dataset.agentId === 'main' && $('#clock').textContent.length > 0, 'usage and clock widgets');
+    check($('.main-window select.model-select').nextElementSibling?.getAttribute('role') === 'combobox', 'retro select enhancement');
+    const select = $('.main-window select.delivery'), trigger = select.nextElementSibling;
+    trigger.click(); check(trigger.getAttribute('aria-expanded') === 'true', 'themed dropdown opens');
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    check(trigger.getAttribute('aria-expanded') === 'false' && select.value === 'steer', 'dropdown cancellation');
+    const sizes = new Set();
+    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
+      $(`[data-feature="${id}"]`).click();
+      const win = $(`[data-window-id="${id}"]`), status = $(`[data-testid="${id}-status"]`);
+      await wait(() => !win.hidden && status.textContent !== 'Loading…');
+      check(!status.classList.contains('feature-error'), id + ' native feature loads');
+      check(saved()[id].sizeMode === 'auto', id + ' auto sizing');
+      sizes.add(win.style.width + '/' + win.style.height);
+      const before = win.style.width;
+      win.querySelector('[aria-label="Close utility window"]').click();
+      check(win.hidden, id + ' hides');
+      $(`[data-feature="${id}"]`).click(); check(win.style.width === before, id + ' stable re-open');
+      win.querySelector('[aria-label="Close utility window"]').click();
+    }
+    check(sizes.size >= 4, 'native utility sizes differ by purpose');
+    check($('[data-testid="providers-key"]').type === 'password' && !$('[data-testid="providers-key"]').value, 'empty credential control');
+    check($('[data-testid="tools-tool-subagent"]')?.checked, 'extension selection reflected');
+    $('#add-agent').click();
+    const draft = document.querySelector('[data-subagent-index]');
+    check(draft && draft.querySelectorAll('.draft-tools input:checked').length === 4, 'explicit draft defaults to read-only');
+    check(saved()[draft.dataset.windowId].sizeMode === 'auto' && draft.getBoundingClientRect().width < width(), 'draft automatically fits below main size');
+    check(!(await state()).agents.some(agent => agent.kind !== 'main'), 'draft does not launch a Pi child');
+    draft.querySelector('[aria-label="Close subagent window"]').click();
+    check(!document.querySelector('[data-subagent-index]'), 'draft close releases its window');
+    $('#help').click(); check($('#help-dialog').open, 'help dialog');
+    const motion = $('#background-motion');
+    if (!motion.disabled) {
+      const paused = motion.getAttribute('aria-pressed') === 'true';
+      motion.click(); await wait(() => $('#backdrop').dataset.running === String(paused));
+      motion.click(); await wait(() => $('#backdrop').dataset.running === String(!paused));
+    }
+    $('#help-dialog').close();
+    main.querySelector('.titlebar').focus();
+    check(saved().main.sizeMode === 'auto', 'selection retains automatic sizing');
+    main.querySelector('textarea').focus(); const stable = width();
+    check(width() === stable, 'editor focus retains geometry');
+    const beforeHide = main.style.width;
+    main.querySelector('[aria-label="Minimize window"]').click(); check(main.hidden, 'main minimize');
+    [...document.querySelectorAll('#tasks button')].find(button => button.textContent === 'Main Agent / Pi').click();
+    check(!main.hidden && main.style.width === beforeHide, 'taskbar restores main');
+    window.nativeFeatureState = { reset: window.piDitherLayoutResetOK === true, session: a.sessionId, tools: JSON.stringify(a.activeTools), wide: width(), utility: parseFloat($('[data-window-id="models"]').style.width) };
+  } else if (stage === 'minimum') {
+    await wait(() => innerWidth <= 800);
+    const rect = main.getBoundingClientRect(), area = $('#desktop').getBoundingClientRect();
+    check(rect.right <= area.right + 1 && rect.bottom <= area.bottom + 1, 'minimum native viewport keeps main inside desktop');
+    check($('.desktop-menu').scrollWidth <= $('.desktop-menu').clientWidth, 'minimum native toolbar fits');
+    check(main.querySelector('.send').getBoundingClientRect().bottom <= rect.bottom + 1, 'minimum native composer remains reachable');
+  } else if (stage === 'narrow') {
+    await wait(() => width() < nativeFeatureState.wide - 50);
+    check(saved().main.sizeMode === 'auto', 'native narrow resize retains auto intent');
+    check($('[data-window-id="models"]').hidden, 'native resize does not reopen hidden windows');
+  } else if (stage === 'wide') {
+    await wait(() => Math.abs(width() - nativeFeatureState.wide) < 2);
+    check(Math.abs(parseFloat($('[data-window-id="models"]').style.width) - nativeFeatureState.utility) < 2, 'hidden utility recovers working size');
+    const maximize = main.querySelector('[aria-label="Maximize or restore main window"]');
+    maximize.click(); maximize.click(); check(saved().main.sizeMode === 'auto', 'maximize/restore retains auto intent');
+    main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    check(saved().main.sizeMode === 'manual', 'manual resize opts out');
+    nativeFeatureState.manual = saved().main.w;
+  } else if (stage === 'manual-narrow') {
+    await wait(() => innerWidth < 1000);
+    check(saved().main.w === nativeFeatureState.manual && saved().main.sizeMode === 'manual', 'native clamping preserves manual preference');
+  } else if (stage === 'manual-wide') {
+    await wait(() => Math.abs(width() - nativeFeatureState.manual) < 2);
+    check(saved().main.sizeMode === 'manual', 'manual override remains stable without a sizing control');
+    sessionStorage.setItem('pi-dither:smoke-facts', JSON.stringify(nativeFeatureState));
+    // Native Reload must rebootstrap auth, not merely rely on old storage.
+    sessionStorage.removeItem('pi-desktop:token');
+  } else if (stage === 'reloaded') {
+    const facts = JSON.parse(sessionStorage.getItem('pi-dither:smoke-facts'));
+    check(saved().main.sizeMode === 'manual' && Math.abs(width() - facts.manual) < 2, 'native Reload keeps manual layout after one-shot reset');
+    if (facts.reset) {
+      check(window.piDitherLayoutResetOK === undefined, 'layout reset script removed before Reload');
+      check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained' && localStorage.getItem('pi-desktop:motion:v1') === 'paused', 'unrelated preferences survive reset and Reload');
+    }
+    check(document.querySelectorAll('[data-subagent-index]').length === 0 && $('[data-window-id="models"]').hidden, 'native Reload creates no drafts or unhidden utilities');
+    check(!location.hash && !location.search, 'reload removes auth fragment and nonsecret nonce');
+    const s = await state(), a = s.agents[0];
+    check(s.agents.length === 1 && a.sessionId === facts.session && a.messages.length === 0 && a.phase === 'idle' && JSON.stringify(a.activeTools) === facts.tools, 'feature checks did not alter the conversation or tools');
+    check(!window.nativeSmokeErrors?.length, 'no frontend exceptions');
+  } else throw new Error('Unknown native validation stage');
+  return true;
+}

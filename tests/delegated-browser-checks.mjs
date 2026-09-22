@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { emptyInspection } from '../desktop/inspection.mjs';
 
 // Synthetic telemetry only: this checks the integrated server/SSE/DOM path without
 // a provider request or a real extension child launch.
@@ -39,6 +40,23 @@ export async function checkDelegatedBrowser({ app, evaluate, until, rpc }) {
       assert.equal(position.top, 105 + index * 240, 'delegates use former Scout/Review vertical positions');
       assert.equal(position.right, 25 + index * 35, 'delegates align with former right-side anchors');
     }
+
+    first.inspection = emptyInspection(); first.inspection.prompt.text = 'Assigned child task';
+    first.inspection.usage = { ...first.inspection.usage, totalTokens: 99, costUsd: 0, provisional: true };
+    publish({ delegations: [first, second] });
+    await until(`${element(first.id)}.querySelector('.inspection-summary').textContent.includes('99 tokens')`);
+    await evaluate(`${element(first.id)}.querySelector('.inspection-panel').open=true; ${element(first.id)}.querySelector('.inspection-section').open=true`);
+    const geometry = await evaluate(`${element(first.id)}.getAttribute('style')`);
+    first.inspection.usage.totalTokens = 120;
+    publish({ delegations: [first, second] });
+    await until(`${element(first.id)}.querySelector('.inspection-summary').textContent.includes('120 tokens')`);
+    assert.equal(await evaluate(`${element(first.id)}.querySelector('.inspection-section').open`), true);
+    assert.equal(await evaluate(`${element(first.id)}.getAttribute('style')`), geometry, 'inspection updates leave observer geometry unchanged');
+    assert.match(await evaluate(`${element(first.id)}.querySelector('.inspection-content').textContent`), /Assigned child task/);
+    delete first.inspection;
+    publish({ delegations: [first, second] });
+    await until(`${element(first.id)}.querySelector('.inspection-summary').textContent.includes('tokens') && !${element(first.id)}.querySelector('.inspection-summary').textContent.includes('120 tokens')`);
+    assert.match(await evaluate(`${element(first.id)}.querySelector('.inspection-content').textContent`), /Unavailable/, 'old-backend inspection remains usable');
 
     first.messages = [{ id: 'a1', role: 'assistant', text: '# Live replacement\n\n<img src=x onerror="window.delegatePwned=1">', status: 'streaming' }];
     publish({ delegations: [first, second] });

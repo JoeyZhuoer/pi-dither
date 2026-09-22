@@ -19,7 +19,7 @@ if (pi.version !== '0.85.1') throw new Error('Bundled core Pi must be 0.85.1.');
 const extension = await realpath(process.env.PI_DESKTOP_SUBAGENTS_ROOT || join(homedir(), '.pi/agent/npm/node_modules/pi-subagents'));
 const extensionMetadata = JSON.parse(await readFile(join(extension, 'package.json'), 'utf8'));
 if (extensionMetadata.name !== 'pi-subagents' || extensionMetadata.version !== '0.69.0') throw new Error('This build requires the validated pi-subagents 0.69.0 installation.');
-const dist = join(root, 'dist'), app = join(dist, 'Pi Dither.app'), stage = join(dist, '.Pi-Dither-build.app');
+const dist = process.env.PI_DITHER_BUILD_DIR ? resolve(process.env.PI_DITHER_BUILD_DIR) : join(root, 'dist'), app = join(dist, 'Pi Dither.app'), stage = join(dist, '.Pi-Dither-build.app');
 await mkdir(dist, { recursive: true });
 await rm(stage, { recursive: true, force: true });
 const contents = join(stage, 'Contents'), resources = join(contents, 'Resources'), runtime = join(resources, 'runtime');
@@ -32,10 +32,18 @@ await mkdir(appSource, { recursive: true });
 // Deliberately never copy the checkout wholesale (.local/auth/sessions/Git).
 const appFiles = [
   'package.json', 'scripts/pi-paths.mjs',
-  ...['server', 'pi-session', 'protocol', 'controls', 'workspace', 'tools', 'extensions', 'rpc-host', 'delegations', 'delegation-bridge', 'subagent-slots', 'native-host'].map((name) => `desktop/${name}.mjs`),
-  ...['app.js', 'backdrop.js', 'delegated.js', 'features.js', 'features.css', 'markdown.js', 'markdown.css', 'windows.js', 'index.html', 'styles.css', 'assets/VT323-Regular.ttf', 'assets/OFL.txt'].map((name) => `desktop/public/${name}`),
+  ...['server', 'pi-session', 'protocol', 'controls', 'workspace', 'tools', 'extensions', 'rpc-host', 'delegations', 'delegation-bridge', 'inspection', 'subagent-slots', 'native-host'].map((name) => `desktop/${name}.mjs`),
+  ...['app.js', 'backdrop.js', 'delegated.js', 'inspection.js', 'inspection.css', 'combobox.js', 'combobox.css', 'features.js', 'features.css', 'markdown.js', 'markdown.css', 'windows.js', 'index.html', 'styles.css', 'assets/VT323-Regular.ttf', 'assets/OFL.txt'].map((name) => `desktop/public/${name}`),
 ];
 for (const path of appFiles) await cp(join(root, path), join(appSource, path));
+const hashFiles = (paths, base) => Promise.all(paths.map(async (path) => ({ path, sha256: createHash('sha256').update(await readFile(join(base, path))).digest('hex') })));
+await writeFile(join(resources, 'source-inventory.json'), JSON.stringify({ application: metadata.version,
+  files: await hashFiles(appFiles, appSource),
+  buildInputs: await hashFiles(['macos/PiDither.swift', 'macos/Icon.swift', 'macos/SmokeChecks.js', 'scripts/build-macos.mjs'], root),
+}, null, 2) + '\n');
+// Executed only by the isolated --smoke-test path; never served by the local API.
+await mkdir(join(resources, 'validation'), { recursive: true });
+await cp(join(root, 'macos/SmokeChecks.js'), join(resources, 'validation/SmokeChecks.js'));
 await cp(process.execPath, join(runtime, 'bin/node'));
 await chmod(join(runtime, 'bin/node'), 0o755);
 const nodeLicense = process.env.PI_DITHER_NODE_LICENSE || join(dirname(dirname(process.execPath)), 'LICENSE');

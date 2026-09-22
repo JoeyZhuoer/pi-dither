@@ -18,6 +18,8 @@ const assets = new Map([
   ['/styles.css', ['styles.css', 'text/css']], ['/app.js', ['app.js', 'text/javascript']],
   ['/windows.js', ['windows.js', 'text/javascript']], ['/backdrop.js', ['backdrop.js', 'text/javascript']],
   ['/delegated.js', ['delegated.js', 'text/javascript']],
+  ['/inspection.js', ['inspection.js', 'text/javascript']], ['/inspection.css', ['inspection.css', 'text/css']],
+  ['/combobox.js', ['combobox.js', 'text/javascript']], ['/combobox.css', ['combobox.css', 'text/css']],
   ['/markdown.js', ['markdown.js', 'text/javascript']], ['/markdown.css', ['markdown.css', 'text/css']],
   ['/features.js', ['features.js', 'text/javascript']], ['/features.css', ['features.css', 'text/css']],
   ['/assets/VT323-Regular.ttf', ['assets/VT323-Regular.ttf', 'font/ttf']],

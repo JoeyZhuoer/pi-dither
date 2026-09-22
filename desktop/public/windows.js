@@ -32,8 +32,12 @@ function readLayout() {
       if (validRect(value)) for (const key of rectKeys) entry[key] = value[key];
       if (typeof value.hidden === 'boolean') entry.hidden = value.hidden;
       if (typeof value.zoomed === 'boolean') entry.zoomed = value.zoomed;
+      if (['compact', 'auto', 'manual'].includes(value.sizeMode)) entry.sizeMode = value.sizeMode;
       if (Number.isSafeInteger(value.observerIndex) && value.observerIndex >= 0 && value.observerIndex < 32) entry.observerIndex = value.observerIndex;
-      if (validRect(value.restore)) entry.restore = Object.fromEntries(rectKeys.map((key) => [key, value.restore[key]]));
+      if (validRect(value.restore)) {
+        entry.restore = Object.fromEntries(rectKeys.map((key) => [key, value.restore[key]]));
+        if (['compact', 'auto', 'manual'].includes(value.restoreMode)) entry.restoreMode = value.restoreMode;
+      }
       if (Object.keys(entry).length) saved[id] = entry;
     }
   } catch { /* Corrupt data and denied storage must not prevent startup. */ }
@@ -57,10 +61,23 @@ export class DesktopWindows {
   constructor(desktop, tasks) {
     this.desktop = desktop; this.tasks = tasks; this.windows = new Map(); this.z = 10;
     this.saved = readLayout(); this.listeners = new Set(); this.focused = null;
-    window.addEventListener('resize', () => {
+    this.resize = () => {
+      const size = `${desktop.clientWidth}:${desktop.clientHeight}`;
+      if (size === this.lastSize || !desktop.clientWidth || !desktop.clientHeight) return;
+      this.lastSize = size;
       for (const win of this.windows.values()) this.reflow(win);
       this.save();
-    });
+    };
+    window.addEventListener('resize', this.resize);
+    // WKWebView/container layout can change independently of a window resize.
+    if (typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(this.resize); this.resizeObserver.observe(desktop);
+    }
+  }
+  destroy() {
+    window.removeEventListener('resize', this.resize); this.resizeObserver?.disconnect();
+    for (const win of this.windows.values()) win.cancelPointer?.();
+    this.listeners.clear();
   }
   legacyDefaultRect(kind, index = 0) {
     // Mobile uses stacked CSS, but must not replace a remembered desktop layout.
@@ -104,8 +121,11 @@ export class DesktopWindows {
       rectKeys.every((key) => Math.abs(saved[key] - rect[key]) < .01));
     const win = { id, title, kind, element, task, titlebar, body: element.querySelector('.window-body'), index,
       rect: { ...layoutRect }, layoutRect, minimized,
-      zoomed: typeof saved?.zoomed === 'boolean' ? saved.zoomed : legacyCustom,
-      restore: validRect(saved?.restore) ? { ...saved.restore } : null };
+      // Legacy zoomed=true cannot distinguish automatic from manual sizing.
+      // Preserve it conservatively until Arrange or an explicit layout reset.
+      sizeMode: saved?.sizeMode ?? ((saved?.zoomed ?? legacyCustom) ? 'manual' : 'compact'),
+      zoomed: saved?.sizeMode ? saved.sizeMode !== 'compact' : typeof saved?.zoomed === 'boolean' ? saved.zoomed : legacyCustom,
+      restore: validRect(saved?.restore) ? { ...saved.restore } : null, restoreMode: saved?.restoreMode ?? 'manual' };
     element.hidden = minimized;
     this.windows.set(id, win); this.desktop.append(element); this.tasks.append(task);
     this.setTitle(win, title);
@@ -114,12 +134,16 @@ export class DesktopWindows {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'icon'; button.textContent = symbol;
       button.setAttribute('aria-label', label); button.title = label; button.addEventListener('click', action); controls.append(button);
     };
-    control('↗', 'Zoom to working size', () => { win.restore = null; win.zoomed = false; this.zoomToFit(win); this.focus(win); });
     control('_', 'Minimize window', () => this.hide(id));
     if (kind === 'main') control('□', 'Maximize or restore main window', () => {
-      if (win.restore) { this.place(win, win.restore); win.restore = null; }
-      else { win.restore = { ...win.layoutRect }; this.place(win, { x: 4, y: 4, w: this.desktop.clientWidth - 10, h: this.desktop.clientHeight - 10 }); }
-      this.focus(win); this.save();
+      if (win.restore) {
+        const mode = win.restoreMode;
+        this.place(win, win.restore); win.restore = null; win.sizeMode = mode; win.zoomed = mode !== 'compact'; this.reflow(win);
+      } else {
+        win.restore = win.sizeMode === 'auto' ? this.workingRect(win) : { ...win.layoutRect }; win.restoreMode = win.sizeMode;
+        this.place(win, { x: 4, y: 4, w: this.desktop.clientWidth - 10, h: this.desktop.clientHeight - 10 });
+      }
+      this.focus(win, true, false); this.save();
     });
     else if (kind === 'utility') control('×', 'Close utility window', () => this.hide(id));
     else control('×', 'Close subagent window', () => onClose?.(win));
@@ -138,7 +162,7 @@ export class DesktopWindows {
     });
     element.querySelector('.resize-handle').addEventListener('keydown', (event) => this.keyboard(win, event, true));
     this.reflow(win);
-    if (!element.hidden) this.focus(win, false, false);
+    if (!element.hidden) { this.zoomToFit(win); this.focus(win, false, false); }
     this.save(); this.changed(); return win;
   }
   setTitle(win, title) {
@@ -242,19 +266,34 @@ export class DesktopWindows {
     const next = { ...win.rect }; next[resizing ? 'w' : 'x'] += delta[0]; next[resizing ? 'h' : 'y'] += delta[1];
     this.place(win, next); this.save();
   }
-  zoomToFit(win) {
-    if (win.zoomed || win.element.hidden || matchMedia('(max-width:760px)').matches) return;
+  workingRect(win) {
     const w = this.desktop.clientWidth, h = this.desktop.clientHeight;
     const profile = profileFor(win.kind, win.id);
     const target = win.kind === 'main' ? { w: Math.min(1100, w * .76), h: h * .94 }
       : profile ? { w: Math.min(profile[2], w * .8), h: Math.min(profile[3], h * .9) }
         : { w: 460, h: 510 };
-    this.place(win, { ...win.rect, w: Math.max(win.rect.w, target.w), h: Math.max(win.rect.h, target.h) });
-    this.save();
+    const child = win.kind === 'subagent' || win.kind === 'delegated';
+    // Grow toward the left, keeping the right-side child anchors. Fit the
+    // available height below each anchor rather than piling every child at top.
+    const x = child && win.sizeMode === 'compact' ? win.layoutRect.x + win.layoutRect.w - target.w : win.layoutRect.x;
+    if (child) target.h = Math.min(target.h, Math.max(win.kind === 'delegated' ? 320 : 250, h - win.layoutRect.y - 8));
+    return { ...win.layoutRect, ...target, x };
+  }
+  autoSize(win = this.focused) {
+    if (typeof win === 'string') win = this.windows.get(win);
+    if (!win || this.windows.get(win.id) !== win || win.element.hidden || matchMedia('(max-width:760px)').matches) return false;
+    const fitted = this.workingRect(win);
+    win.restore = null; win.sizeMode = 'auto'; win.zoomed = true; win.layoutRect = fitted;
+    this.reflow(win); this.save(); this.changed(); return true;
+  }
+  zoomToFit(win) {
+    if (!win.zoomed) this.autoSize(win);
   }
   reflow(win) {
-    const requested = win.restore && !matchMedia('(max-width:760px)').matches
-      ? { x: 4, y: 4, w: this.desktop.clientWidth - 10, h: this.desktop.clientHeight - 10 } : win.layoutRect;
+    const mobile = matchMedia('(max-width:760px)').matches;
+    const requested = win.restore && !mobile
+      ? { x: 4, y: 4, w: this.desktop.clientWidth - 10, h: this.desktop.clientHeight - 10 }
+      : win.sizeMode === 'auto' && !mobile ? this.workingRect(win) : win.layoutRect;
     this.place(win, requested, false);
   }
   place(win, requested, remember = true) {
@@ -270,7 +309,7 @@ export class DesktopWindows {
     const x = clamp(rect.x, 0, Math.max(0, areaW - w));
     const y = clamp(rect.y, 0, Math.max(0, areaH - h));
     win.rect = { x, y, w, h };
-    if (remember) { win.layoutRect = { ...win.rect }; win.zoomed = true; }
+    if (remember) { win.layoutRect = { ...win.rect }; win.zoomed = true; win.sizeMode = 'manual'; }
     Object.assign(win.element.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
     if (win.kind === 'main') for (const other of this.windows.values()) if (other.kind !== 'main' && other.kind !== 'utility') this.reflow(other);
   }
@@ -296,15 +335,15 @@ export class DesktopWindows {
   }
   arrange() {
     for (const win of this.windows.values()) {
-      win.restore = null; win.zoomed = false; win.layoutRect = this.defaultRect(win.kind, win.index, win.id); this.reflow(win);
+      win.restore = null; win.zoomed = false; win.sizeMode = 'compact'; win.layoutRect = this.defaultRect(win.kind, win.index, win.id); this.reflow(win);
     }
     this.save(); this.changed();
   }
   save() {
     // Preserve not-yet-added utilities during startup; all live windows precede old entries.
     const saved = Object.create(null);
-    for (const win of this.windows.values()) saved[win.id] = { ...win.layoutRect, hidden: win.element.hidden, zoomed: win.zoomed,
-      ...(win.restore ? { restore: { ...win.restore } } : {}), ...(win.kind === 'delegated' ? { observerIndex: win.index } : {}) };
+    for (const win of this.windows.values()) saved[win.id] = { ...win.layoutRect, hidden: win.element.hidden, zoomed: win.zoomed, sizeMode: win.sizeMode,
+      ...(win.restore ? { restore: { ...win.restore }, restoreMode: win.restoreMode } : {}), ...(win.kind === 'delegated' ? { observerIndex: win.index } : {}) };
     for (const [id, entry] of Object.entries(this.saved)) {
       if (Object.keys(saved).length >= 256) break;
       if (!Object.hasOwn(saved, id)) saved[id] = entry;

@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/markdown.css">
   <link rel="stylesheet" href="/features.css">
+  <link rel="stylesheet" href="/inspection.css">
+  <link rel="stylesheet" href="/combobox.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -51,7 +53,7 @@
     <div class="utility-title">Desktop / Field guide</div>
     <div class="help-body">
       <h2>Your main agent gets the big window.</h2>
-      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Selecting a compact/default window via its title bar, menu or taskbar enlarges it once. Your adjusted size and position are remembered when hiding, showing or reloading. Use ↗ to zoom again; Arrange resets the layout.</p>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Windows automatically choose a suitable size when opened: main, children, delegated observers and each utility have different size profiles. They adapt when the native app or desktop area is resized; manual adjustments remain respected. No Auto-size button is needed. Hidden windows stay hidden. Arrange resets the layout.</p>
       <p>The desktop usage chart follows the selected agent: input, output, cache, reported cost and context occupancy. Click its heading for details. Unknown usage is shown as —; provisional turn usage is not added to session totals.</p>
       <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
       <p><strong>No empty subagent windows are created at startup.</strong> Use + Subagent to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
@@ -60,8 +62,10 @@
       <p>Provider key overrides last only for this server lifetime. Archive hides a saved session without deleting it. Workspace/session/provider changes require idle agents.</p>
       <p>This release does not attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom providers, session-tree editing, images and arbitrary extensions remain terminal features.</p>
       <p>The main agent loads the installed pi-subagents extension. Its delegated agents follow their configured permissions. Automatic DELEGATED observer windows appear on the right in the former Scout/Review positions and show their available live output and results without launching extra agents. Closing an observer only dismisses the view; use the extension to stop its task. Minimize keeps it in the taskbar. Tools shows extension availability; restart the server after updating it.</p>
+      <p>Expand <strong>Inspection</strong> in a subagent window for its available assigned/delivered prompt, tool-call previews, attributed file-change evidence, tokens, cost and elapsed wall time. Unknown is not zero. Live counters stay provisional until final usage is reported; some upstream prompts and async metrics are unavailable. Shared workspace Git changes are not attributed to a child.</p>
+      <p>Dropdown controls and their menus use the same retro style. Arrows/Home/End navigate, Enter/Space selects, Escape or Tab cancels tentative changes, and typing searches options. The native select remains the form's source of truth.</p>
       <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; manual desktop subagents can only select from their read-only catalog.</p>
-      <p>Window types have distinct size presets; your manual layout wins. The background keeps its original idle pattern, with different thinking/busy and output patterns. Reduced motion, hidden tabs and manual pause always take priority.</p>
+      <p>Window types have distinct size presets; your manual layout wins. The background vibrates gently while stopped and visibly flows—thinking circulates, output streams—while an agent is busy. Reduced motion, hidden tabs and manual pause always take priority.</p>
       <button id="background-motion" type="button" aria-pressed="false">Pause background motion</button>
       <form method="dialog"><button class="primary">Understood</button></form>
     </div>
