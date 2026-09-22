@@ -186,9 +186,14 @@ try {
     const canvasHash = `(() => { const c = document.querySelector('#background'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i], 16777619); return h; })()`;
     await evaluate(`(async () => { const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); }); const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'ripple.png', { type: 'image/png' })); const input = document.querySelector('[data-testid="background-photo"]'); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
-    // Earlier pointer moves may still be rippling; wait for the true base first.
-    await evaluate('new Promise((resolve) => setTimeout(resolve, 900))');
-    const basePattern = await evaluate(canvasHash);
+    // Earlier pointer moves may still be rippling; wait for a stable base first.
+    let basePattern = await evaluate(canvasHash);
+    for (let attempt = 0; attempt < 40; attempt++) {
+      let stable = true;
+      for (let sample = 0; sample < 3 && stable; sample++) { await evaluate('new Promise((resolve) => setTimeout(resolve, 200))'); stable = (await evaluate(canvasHash)) === basePattern; }
+      if (stable) break;
+      basePattern = await evaluate(canvasHash);
+    }
     await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }))`);
     await until(`${canvasHash} !== ${basePattern}`);
     assert.notEqual(await evaluate(canvasHash), basePattern, 'the dots spread under the pointer');

@@ -158,7 +158,7 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   // Ripple cells never leak outside the region bounding box.
   assert.equal(spread.length, region.width * region.height);
   assert.deepEqual(rippleMask(base, width, rippleRegion(width, height, { x: 0, y: 0 }), { x: 0, y: 0, strength: 1 }).length, rippleRegion(width, height, { x: 0, y: 0 }).width * rippleRegion(width, height, { x: 0, y: 0 }).height);
-  assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 10, `interaction radius stays tiny (${RIPPLE_RADIUS}px)`);
+  assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 32, `interaction radius stays moderate (${RIPPLE_RADIUS}px)`);
 });
 
 test('pointer links fan out to distinct nearby dots like the reference field', () => {
@@ -168,7 +168,7 @@ test('pointer links fan out to distinct nearby dots like the reference field', (
   dot(mask, width, 40, 12);
   const region = { x: 0, y: 0, width, height };
   const links = rippleLinks(mask, width, region, { x: 40.5, y: 40.5 });
-  assert.ok(links.length > 0 && links.length <= 14, `a bounded fan of links (${links.length})`);
+  assert.ok(links.length > 0 && links.length <= 20, `a bounded fan of links (${links.length})`);
   assert.ok(links.every((link) => link[0] === 40.5 && link[1] === 40.5), 'all links start at the pointer');
   assert.ok(links.every((link) => Math.hypot(link[2] - 40.5, link[3] - 40.5) <= RIPPLE_LINK), 'links stay inside the radius');
   assert.ok(links.every((link) => link[4] > 0 && link[4] <= .32), 'alpha fades with distance');

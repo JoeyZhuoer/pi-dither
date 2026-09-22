@@ -85,9 +85,14 @@ async function piDitherSmoke(stage) {
     check(particleInk() === 0, 'the particle layer clears when off');
     // Pointer ripple over the dithered dots: spread, then settle back exactly.
     const canvasHash = () => { const c = $('#background'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i], 16777619); return hash; };
-    // Earlier pointer moves may still be rippling; wait for the true base first.
-    await new Promise(resolve => setTimeout(resolve, 900));
-    const basePattern = canvasHash();
+    // Earlier pointer moves may still be rippling; wait for a stable base first.
+    let basePattern = canvasHash();
+    for (let attempt = 0; attempt < 40; attempt++) {
+      let stable = true;
+      for (let sample = 0; sample < 3 && stable; sample++) { await new Promise(resolve => setTimeout(resolve, 200)); stable = canvasHash() === basePattern; }
+      if (stable) break;
+      basePattern = canvasHash();
+    }
     document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }));
     await wait(() => canvasHash() !== basePattern, 'ripple spreads');
     check(canvasHash() !== basePattern, 'the dots spread under the pointer');

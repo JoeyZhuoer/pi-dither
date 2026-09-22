@@ -10,13 +10,13 @@ export const DEFAULT_THEME = '#e58da5';
 export const DEFAULT_GROUND = '#e58da5';
 export const INK = '#20201f';
 export const MAX_PHOTO_CHARS = 900_000;
-export const RIPPLE_RADIUS = 10;
+export const RIPPLE_RADIUS = 26;
 export const RIPPLE_SPREAD = 1.6;
 export const RIPPLE_SWIRL = .45;
-export const RIPPLE_LINK = 40;
-export const RIPPLE_LINKS = 14;
+export const RIPPLE_LINK = 90;
+export const RIPPLE_LINKS = 20;
 export const RIPPLE_LINK_GAP = 7;
-export const RIPPLE_MS = 520;
+export const RIPPLE_MS = 1000;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 // One cell per CSS pixel keeps the dither dots small and the photo precise; the
 // budget still bounds very large windows. Painting is a single static buffer.
