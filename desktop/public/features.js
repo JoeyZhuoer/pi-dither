@@ -1,6 +1,6 @@
 import { syncCombobox } from './combobox.js';
 import { DEFAULT_GROUND, DEFAULT_THEME } from './background.js';
-import { PARTICLE_MODES } from './particles.js';
+import { PARTICLE_CHOICES, PHOTO_MODES, isPhotoMode } from './particles.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
@@ -377,8 +377,11 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   on(groundInput, 'change', () => { if (background) message(backgroundPanel, `Ground colour ${background.state.ground}.`); });
   on(particleInput, 'change', () => {
     if (!particles) return;
-    choices(particleInput, Object.keys(PARTICLE_MODES).map((mode) => [mode, mode === 'off' ? 'Off' : mode[0].toUpperCase() + mode.slice(1)]), particleInput.value);
-    message(backgroundPanel, `Particles ${particles.setMode(particleInput.value)}.`);
+    choices(particleInput, PARTICLE_CHOICES, particleInput.value);
+    const applied = particles.setMode(particleInput.value);
+    message(backgroundPanel, isPhotoMode(applied)
+      ? `Particles ${applied}: the photo becomes a point cloud; the pointer ${PHOTO_MODES[applied] === 'gather' ? 'pulls' : 'pushes'} it.`
+      : `Particles ${applied}.`);
   });
   on(photoInput, 'change', () => {
     const file = photoInput.files && photoInput.files[0];
@@ -394,7 +397,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (!background) return;
     themeInput.value = background.state.theme;
     groundInput.value = background.state.ground;
-    if (particles) choices(particleInput, Object.keys(PARTICLE_MODES).map((mode) => [mode, mode === 'off' ? 'Off' : mode[0].toUpperCase() + mode.slice(1)]), particles.mode);
+    if (particles) choices(particleInput, PARTICLE_CHOICES, particles.mode);
   };
 
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.

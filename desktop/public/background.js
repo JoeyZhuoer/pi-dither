@@ -214,24 +214,30 @@ function encodeImage(image, maxEdge, quality, doc) {
   return scratch.toDataURL('image/jpeg', quality);
 }
 
-export function createBackground({ canvas, storage, document: doc = canvas?.ownerDocument ?? globalThis.document } = {}) {
+export function createBackground({ canvas, storage, onPhotoChange, document: doc = canvas?.ownerDocument ?? globalThis.document } = {}) {
   const state = readBackground(storage);
   let image = null, baseInk = null, bitmapWidth = 0, bitmapHeight = 0;
   let resizeTimer = null, frame = null, lastFrame = 0, lastRegion = null, pointer = null, ripple = 0, disposed = false;
   const view = () => doc?.defaultView ?? globalThis;
   const size = () => backgroundSize(view()?.innerWidth ?? canvas?.clientWidth, view()?.innerHeight ?? canvas?.clientHeight);
 
-  function sample(width, height) {
+  // Cover-fits the current photo into a scratch canvas and reads it back, so
+  // both the dither and the particle point cloud sample the same pixels.
+  function readPhoto(width, height) {
     if (!image || !image.naturalWidth) return null;
     const scratch = doc.createElement('canvas');
     scratch.width = width; scratch.height = height;
     const ctx = scratch.getContext('2d');
     if (!ctx) return null;
-    // Cover fit: preserve the aspect ratio and centre-crop.
     const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
     const drawWidth = image.naturalWidth * scale, drawHeight = image.naturalHeight * scale;
     ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-    return ditherPhoto(ctx.getImageData(0, 0, width, height).data, width, height);
+    return ctx.getImageData(0, 0, width, height);
+  }
+
+  function sample(width, height) {
+    const photo = readPhoto(width, height);
+    return photo ? ditherPhoto(photo.data, width, height) : null;
   }
 
   function paint() {
@@ -341,6 +347,7 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
       if (stored) writePhoto(storage, dataUrl);
       image = stored ? await decodeImage(dataUrl, doc) : original;
       repaint();
+      onPhotoChange?.();
       return { ok: true, stored, message: stored ? 'Photo dithered into the background.' : 'Photo is too large to remember; it shows until the app restarts.' };
     },
     async setPhotoDataUrl(dataUrl) {
@@ -348,9 +355,15 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
       image = await decodeImage(dataUrl, doc);
       state.photo = dataUrl;
       repaint();
+      onPhotoChange?.();
       return true;
     },
-    clearPhoto() { state.photo = ''; image = null; removePhoto(storage); repaint(); },
+    // A sampled copy of the current photo (or null), for the point cloud.
+    photoSample(width, height) {
+      const photo = readPhoto(Math.max(1, Math.floor(width)), Math.max(1, Math.floor(height)));
+      return photo ? { data: photo.data, width: photo.width, height: photo.height } : null;
+    },
+    clearPhoto() { state.photo = ''; image = null; removePhoto(storage); repaint(); onPhotoChange?.(); },
     destroy() {
       disposed = true;
       if (resizeTimer) clearTimeout(resizeTimer);

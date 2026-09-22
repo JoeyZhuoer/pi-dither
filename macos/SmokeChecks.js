@@ -80,6 +80,13 @@ async function piDitherSmoke(stage) {
     document.dispatchEvent(new PointerEvent('pointermove', { clientX: 380, clientY: 260, bubbles: true }));
     await wait(() => particleInk() !== particlesBefore, 'particles animate');
     check(particleInk() !== particlesBefore, 'the pointer stirs and the field keeps animating');
+    // Photo cloud: the same photo drives the site-style point cloud.
+    particleSelect.value = 'photo'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'photo', 'photo cloud mode persists');
+    await wait(() => particleInk() > 200, 'photo cloud draws');
+    check(particleInk() > 200, 'the photo becomes many sampled points');
+    particleSelect.value = 'photo-gather'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'photo-gather', 'the pull variant is selectable');
     particleSelect.value = 'off'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:particles:v1') === 'off', 'particles can be switched off');
     check(particleInk() === 0, 'the particle layer clears when off');

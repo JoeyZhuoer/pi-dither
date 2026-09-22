@@ -199,6 +199,16 @@ try {
     assert.notEqual(await evaluate(canvasHash), basePattern, 'the dots spread under the pointer');
     await until(`${canvasHash} === ${basePattern}`);
     assert.equal(await evaluate(canvasHash), basePattern, 'the dots settle back exactly');
+    // The same photo can drive the site-style point cloud instead of the free field.
+    const particleInk = `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) inked++; return inked; })()`;
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'photo'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'photo', 'photo cloud mode persists');
+    await until(`${particleInk} > 200`);
+    assert.ok(await evaluate(`${particleInk} > 200`), 'the photo becomes many sampled points');
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'photo-gather'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'photo-gather', 'the pull variant is selectable');
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'off'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate(particleInk), 0, 'the photo cloud clears when off');
     await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'ripple fixture photo removed');
   }

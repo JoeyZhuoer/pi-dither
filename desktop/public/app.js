@@ -395,8 +395,8 @@ async function eventStream() {
 createAgentPanel('main', 'Main agent', 'main');
 installComboboxes(document);
 // Static background (theme/ground/photo) plus an optional particle field.
-const background = createBackground({ canvas: $('#background'), storage: localStorage });
-const particles = createParticles({ canvas: $('#particles'), storage: localStorage });
+const background = createBackground({ canvas: $('#background'), storage: localStorage, onPhotoChange: () => particles.refreshPhoto() });
+const particles = createParticles({ canvas: $('#particles'), storage: localStorage, photo: (width, height) => background.photoSample(width, height) });
 features = installFeatureWindows({ windows, api, toast, getState: featureState, background, particles });
 usageDiagram = installUsageDiagram($('#usage-diagram'), () => {
   if (desktopVersion) features.open('usage');
