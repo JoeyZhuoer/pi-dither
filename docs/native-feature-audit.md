@@ -23,7 +23,7 @@ Status: **validated, installed and opened; follow-up source published on `main` 
 | --- | --- | --- |
 | Automatic-on-open fitting, minimum width + medium height | Unit tests; real DOM; native 800/980/1440px width transitions | Pass; no fitting button, compact presets separate, manual sizes saved |
 | Selective one-shot layout reset | Native fixture seeded with stale geometry/visibility and unrelated local/session preferences | Pass; geometry/dismissals cleared, motion/other preferences retained, script removed before Reload |
-| One-way busy wave | Backdrop unit tests (byte-identical idle goldens, busy time-invariance, demodulated steady direction, phase freeze/resume, small per-frame change, on-canvas phases); Chromium fixture activity wiring and captures; native idle reporting | Pass; idle keeps its vibration, busy travels one way without vibration; live provider streaming not exercised |
+| Water-surface busy background | Backdrop unit tests (byte-identical idle goldens, wave superposition, reflective boundaries keep energy, damping to silence, busy rain and idle fade through the controller); Chromium fixture; native idle reporting | Pass; idle keeps its vibration, busy rains interfering ripples; live provider streaming not exercised |
 | Drag/keyboard resize, maximize/restore, Arrange | Unit/Chromium; native maximize and keyboard resize | Pass; custom geometry retained |
 | Hide/minimize/taskbar/reload, mobile layouts | Chromium, WKWebView, actual app hide/reopen and Reload handlers | Pass; no implicit agent launch or focus/reopen on resize |
 | Models and thinking | Form/API contract and guard tests; native utility loading | Pass; no paid inference |

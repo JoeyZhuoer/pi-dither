@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
-import { drawBackdrop, FLOW_RADIANS_PER_SECOND, startBackdrop } from '../desktop/public/backdrop.js';
+import { drawBackdrop, startBackdrop, WaterSurface } from '../desktop/public/backdrop.js';
 
 class Events {
   listeners = new Map();
@@ -113,7 +113,7 @@ test('drawBackdrop caps cells and individual bitmap dimensions even for huge or 
   const f = fixture();
   for (const [width, height] of [[1920, 1080], [7680, 4320], [1e9, 1e9], [1e9, 1], [1, 1e9], [0, NaN], [Infinity, -1]]) {
     f.resize(width, height);
-    for (const mode of ['idle', 'thinking', 'output']) drawBackdrop(f.canvas, 12, mode);
+    drawBackdrop(f.canvas, 12);
     for (const frame of f.frames.slice(-3)) {
       assert.ok(frame.width * frame.height <= 100_000);
       assert.ok(frame.calls <= 100_000);
@@ -322,37 +322,11 @@ test('idle pixels exactly match the original animation', () => {
     [123.5, 'be44e5ef3f0a4cb67c9ea2e6f29597ee005c3628754b522ed7b92d87f3e16a52'],
   ];
   for (const [time, expected] of goldens) {
-    for (const mode of [undefined, 'idle', 'invalid', null, {}, 'tool']) {
-      drawBackdrop(f.canvas, time, mode);
-      assert.equal(createHash('sha256').update([...f.frames.at(-1).cells].join('|')).digest('hex'), expected);
-    }
+    drawBackdrop(f.canvas, time);
+    assert.equal(createHash('sha256').update([...f.frames.at(-1).cells].join('|')).digest('hex'), expected);
   }
 });
 
-// Ink margins along one axis: a coarse profile for measuring how far the
-// flowing field drifted between two frames. Positive means the pattern moved
-// toward smaller coordinates along that axis.
-function axisProfile(frame, axis) {
-  const counts = new Map();
-  for (const cell of frame.cells) {
-    const value = Number(cell.split(',')[axis]);
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  return { counts, length: axis === 0 ? frame.width : frame.height };
-}
-function bestTravel(before, after, axis, limit = 8) {
-  const a = axisProfile(before, axis), b = axisProfile(after, axis);
-  let best = 0, bestScore = Infinity;
-  for (let shift = -limit; shift <= limit; shift++) {
-    let score = 0;
-    for (let index = 0; index < a.length; index++) {
-      const next = b.counts.get(index), previous = a.counts.get(index + shift);
-      if (next || previous) score += Math.abs((next ?? 0) - (previous ?? 0));
-    }
-    if (score < bestScore) { bestScore = score; best = shift; }
-  }
-  return best;
-}
 function changedCells(before, after) {
   let changed = 0;
   for (const cell of before.cells) if (!after.cells.has(cell)) changed++;
@@ -360,120 +334,85 @@ function changedCells(before, after) {
   return changed;
 }
 
-test('activity patterns are deterministic and spatially distinct in the same palette', () => {
-  const f = fixture(), snapshots = [];
-  for (const mode of ['idle', 'thinking', 'output']) {
-    drawBackdrop(f.canvas, 12, mode);
-    const first = f.frames.at(-1);
-    snapshots.push(first);
-    drawBackdrop(f.canvas, 12, mode);
-    assert.deepEqual(f.frames.at(-1), first, 'the same inputs render the same pixels');
-    assert.equal(first.color, '#20201f');
-  }
-  for (let i = 0; i < snapshots.length; i++) for (let j = i + 1; j < snapshots.length; j++) {
-    const changed = [...snapshots[i].cells].filter(cell => !snapshots[j].cells.has(cell)).length;
-    assert.ok(changed > 100, 'modes have measurably different spatial patterns');
-  }
+test('water waves interfere, bounce off the edges and slowly flatten out', () => {
+  // Interference: the surface is linear, so two droplets together equal the sum
+  // of the same droplets simulated apart.
+  const first = new WaterSurface(60, 40), second = new WaterSurface(60, 40), both = new WaterSurface(60, 40);
+  first.drop(20, 18, 4, 1); second.drop(42, 24, 3, .8);
+  both.drop(20, 18, 4, 1); both.drop(42, 24, 3, .8);
+  for (let step = 0; step < 12; step++) { first.step(0); second.step(0); both.step(0); }
+  let deviation = 0;
+  for (let index = 0; index < both.current.length; index++) deviation = Math.max(deviation, Math.abs(both.current[index] - first.current[index] - second.current[index]));
+  assert.ok(deviation < 1e-4, `waves superpose (max deviation ${deviation})`);
+  // Reflective edges: without damping a closed surface keeps its energy, so the
+  // waves bounce back instead of leaking out of the frame.
+  const energy = surface => { let total = 0; for (let index = 0; index < surface.current.length; index++) total += surface.current[index] ** 2; return total; };
+  const peak = surface => { let value = 0; for (let index = 0; index < surface.current.length; index++) value = Math.max(value, Math.abs(surface.current[index])); return value; };
+  const sealed = new WaterSurface(40, 24);
+  sealed.drop(10, 12, 3, 1);
+  for (let step = 0; step < 60; step++) sealed.step(0);
+  const settled = energy(sealed);
+  for (let step = 60; step < 2000; step++) sealed.step(0);
+  assert.ok(energy(sealed) > settled * .4, `reflected waves keep their energy (${(energy(sealed) / settled).toFixed(2)} of the settled level)`);
+  assert.ok(peak(sealed) > .2 && peak(sealed) < 3, `the bouncing surface stays bounded (peak ${peak(sealed).toFixed(2)})`);
+  // Damping makes the surface slowly disappear and report itself quiet.
+  const fading = new WaterSurface(40, 24);
+  fading.drop(20, 12, 3, 1);
+  assert.equal(fading.silent(), false, 'a fresh droplet is active');
+  for (let step = 0; step < 600; step++) fading.step(1 / 12);
+  assert.equal(fading.silent(), true, 'the surface goes quiet when nothing is dropped');
+  assert.ok(fading.energy < .01, `quiet surface energy is small (${fading.energy.toExponential(1)})`);
 });
 
-test('busy waves are time-invariant and travel one way through the frozen phase', () => {
-  const f = fixture();
-  const frameAt = (time, mode, shift = 0) => { drawBackdrop(f.canvas, time, mode, shift); return f.frames.at(-1); };
-  const fraction = (before, after) => changedCells(before, after) / (before.width * before.height);
-  // No vibration while generating: one phase means one set of pixels, whatever
-  // the animation time is.
-  for (const mode of ['thinking', 'output']) assert.deepEqual(frameAt(2, mode, 5), frameAt(37.5, mode, 5), `${mode} holds still between phase steps`);
-  // The band pattern advances in one steady direction: the demodulated phase
-  // at the band frequency decreases monotonically as the phase grows, and y
-  // grows downward, so both busy modes travel upward.
-  const demodulate = (frame, kx, ky) => {
-    let re = 0, im = 0;
-    for (const cell of frame.cells) {
-      const [x, y] = cell.split(',').map(Number);
-      const angle = kx * x + ky * y;
-      re += Math.cos(angle); im += Math.sin(angle);
-    }
-    return Math.atan2(im, re);
-  };
-  const unwrap = value => { while (value > Math.PI) value -= 2 * Math.PI; while (value < -Math.PI) value += 2 * Math.PI; return value; };
-  for (const [mode, kx, ky] of [['thinking', .25, .19], ['output', 0, .34]]) {
-    const base = frameAt(0, mode, 0);
-    const readings = [.5, 1, 1.5].map(shift => unwrap(demodulate(frameAt(0, mode, shift), kx, ky) - demodulate(base, kx, ky)));
-    assert.ok(readings[0] < 0 && readings[1] < readings[0] && readings[2] < readings[1], `${mode} travels steadily in one direction (${readings.map(value => value.toFixed(2)).join(', ')})`);
-    assert.ok(Math.abs(readings[2]) >= .4, `${mode} moves measurably (${Math.abs(readings[2]).toFixed(2)} rad)`);
-  }
-  // Adjacent phase steps change a small part of the dither and never re-dither
-  // it wholesale across a cycle.
-  const step = FLOW_RADIANS_PER_SECOND / 12;
-  for (const mode of ['thinking', 'output']) {
-    let largest = 0, smallest = 1;
-    for (let i = 0; i < 24; i++) {
-      const moved = fraction(frameAt(0, mode, i * step), frameAt(0, mode, (i + 1) * step));
-      largest = Math.max(largest, moved); smallest = Math.min(smallest, moved);
-    }
-    assert.ok(smallest > 0, `${mode} keeps moving`);
-    assert.ok(largest < .09, `${mode} has no re-dither pop (largest ${(largest * 100).toFixed(1)}%)`);
-  }
-  // Any phase keeps the pattern on canvas.
-  const area = f.canvas.width * f.canvas.height;
-  for (const mode of ['thinking', 'output']) for (const shift of [0, 12, 120, 1200]) {
-    const frame = frameAt(0, mode, shift);
-    assert.ok(frame.cells.size > 200 && frame.cells.size < area, `${mode} stays on canvas at phase ${shift}`);
-  }
-});
-
-test('idle keeps its shimmer and holds the phase where generation stopped', () => {
-  const f = fixture();
-  const frameAt = (time, mode, shift = 0) => { drawBackdrop(f.canvas, time, mode, shift); return f.frames.at(-1); };
-  const fraction = (before, after) => changedCells(before, after) / (before.width * before.height);
-  // Idle still shimmers from frame to frame, exactly as before.
-  const shimmer = fraction(frameAt(40, 'idle'), frameAt(40 + 1 / 12, 'idle'));
-  assert.ok(shimmer > 0 && shimmer < .02, 'idle shimmers in place');
-  // A frozen phase is part of the idle pixels, so stopping never snaps back.
-  assert.notDeepEqual(frameAt(41, 'idle', 3.7), frameAt(41, 'idle', 0), 'idle honors the stopped phase');
-  assert.ok(fraction(frameAt(41, 'idle', 3.7), frameAt(41, 'idle', 0)) > .01, 'the frozen phase is visible');
-  // Idle holds its position: no travel of its own.
-  assert.equal(bestTravel(frameAt(0, 'idle', 3.7), frameAt(3, 'idle', 3.7), 1), 0, 'idle holds position');
-});
-
-test('background phase advances only while busy and freezes in place when work stops', () => {
-  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
-  const tick = FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000);
-  let shift = 0;
+test('busy activity rains ripples while idle adds none and lets them fade', () => {
+  const f = fixture(), reference = fixture();
+  // A deterministic but varied droplet stream, so the ripples spread out.
+  let seed = 7;
+  const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  const controller = startBackdrop(f.canvas, { random });
   controller.setActivity('thinking');
-  f.advance(500);
-  for (let i = 0; i < 6; i++) shift += tick;
-  // Switching to idle keeps that phase and only shimmers from here on.
+  f.advance(2000);
+  drawBackdrop(reference.canvas, (f.frames.length - 1) / 12);
+  const base = reference.frames.at(-1);
+  const ripple = changedCells(f.frames.at(-1), base) / (base.width * base.height);
+  assert.ok(ripple > .015, `busy frames carry visible ripples (${(ripple * 100).toFixed(1)}% of cells)`);
+  // Stopping adds nothing new: after enough time the water has disappeared and
+  // the frame is exactly the plain pattern again.
   controller.setActivity('idle');
-  f.advance(1000);
-  let ticks = 18;
-  drawBackdrop(reference.canvas, ticks / 12, 'idle', shift);
-  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'idle continues at the frozen busy phase');
-  // Busy again resumes travel from that same phase.
-  controller.setActivity('output');
-  f.advance(250);
-  for (let i = 0; i < 3; i++) shift += tick;
-  ticks += 3;
-  drawBackdrop(reference.canvas, ticks / 12, 'output', shift);
-  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'resuming continues the one-way travel');
+  for (let second = 0; second < 60; second++) f.advance(1000);
+  drawBackdrop(reference.canvas, (f.frames.length - 1) / 12);
+  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'waves disappear when generation stops');
   controller.destroy(); assertDisposed(f);
 });
 
+test('idle keeps its original shimmer in place', () => {
+  const f = fixture();
+  const frameAt = time => { drawBackdrop(f.canvas, time); return f.frames.at(-1); };
+  const shimmer = changedCells(frameAt(40), frameAt(40 + 1 / 12)) / (f.canvas.width * f.canvas.height);
+  assert.ok(shimmer > 0 && shimmer < .02, `idle shimmers in place (${(shimmer * 100).toFixed(2)}%)`);
+  assert.ok(Math.abs(frameAt(40).cells.size - frameAt(43).cells.size) < 40, 'idle does not drift away');
+});
+
 test('activity transitions coalesce, normalize invalid modes and never schedule extra work', () => {
-  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
-  const tick = FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000);
-  let ticks = 0, shift = 0;
-  for (const mode of ['thinking', 'output', 'idle', 'bogus', 'output']) {
+  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas, { random: () => .5 });
+  let ticks = 0;
+  for (const mode of ['idle', 'bogus', 'tool', 'idle']) {
     const count = f.frames.length;
     for (let i = 0; i < 20; i++) controller.setActivity(mode);
     assert.equal(f.frames.length, count);
     assert.equal(f.timers.size, 1);
     f.advance(1000 / 12);
     ticks++;
-    if (mode === 'thinking' || mode === 'output') shift += tick;
-    drawBackdrop(reference.canvas, ticks / 12, mode, shift);
-    assert.deepEqual(f.frames.at(-1), reference.frames.at(-1));
+    drawBackdrop(reference.canvas, ticks / 12);
+    assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), `${mode} keeps the plain pattern`);
   }
+  const count = f.frames.length;
+  for (let i = 0; i < 20; i++) controller.setActivity(i % 2 ? 'thinking' : 'output');
+  assert.equal(f.frames.length, count, 'activity changes never draw outside the cadence');
+  assert.equal(f.timers.size, 1, 'activity changes never schedule a second loop');
+  f.advance(1000); ticks += 12;
+  drawBackdrop(reference.canvas, ticks / 12);
+  assert.notDeepEqual(f.frames.at(-1).cells, reference.frames.at(-1).cells, 'busy activity rains water');
   assert.equal(f.maxTimers, 1);
   controller.destroy(); controller.setActivity('thinking');
   assertDisposed(f);
@@ -492,12 +431,12 @@ for (const stop of ['manual', 'hidden', 'reduced']) {
     }
     assert.equal(f.frames.length, count);
     assert.equal(f.timers.size, 0);
-    controller.setActivity('output');
+    controller.setActivity('idle');
     if (stop === 'manual') controller.setPaused(false);
     if (stop === 'hidden') f.visibility(false);
     if (stop === 'reduced') f.reduction(false);
     f.advance(100);
-    drawBackdrop(reference.canvas, 1 / 12, 'output', FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000));
+    drawBackdrop(reference.canvas, 1 / 12);
     assert.deepEqual(f.frames.at(-1), reference.frames[0]);
     assert.equal(f.maxTimers, 1);
     controller.destroy(); assertDisposed(f);

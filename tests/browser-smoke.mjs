@@ -293,7 +293,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, flowing busy backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, water-surface backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');
