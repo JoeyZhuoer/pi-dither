@@ -220,16 +220,6 @@ try {
     await evaluate('document.querySelector(".child-transfer").click()');
     assert.ok((await evaluate('document.querySelector(".main-window textarea").value')).includes('Read-only finding'));
     assert.equal(app.sessions.get('main').calls.length, 0, 'handoff only inserts a draft');
-    // Generated text seeds the background wave from a local hash only.
-    const seededSignal = await evaluate('document.querySelector("#backdrop").dataset.signal');
-    assert.ok(Number(seededSignal) > 0, 'generated text seeds the background wave');
-    assert.ok(Number(await evaluate('document.querySelector("#backdrop").dataset.progress')) > 0, 'wave progress follows the generated text');
-    const generatedSession = app.sessions.get(childId);
-    generatedSession.state.messages.push({ id: 'wave-seed-check', role: 'assistant', text: 'A fresh generated reply reshapes the dither wave.', at: Date.now() + 1000, status: 'done' });
-    generatedSession.emit('change');
-    await until(`document.querySelector("#backdrop").dataset.signal !== ${JSON.stringify(seededSignal)}`);
-    generatedSession.state.messages.pop();
-    generatedSession.emit('change');
   }
   const compactModels = await evaluate('parseFloat(document.querySelector("[data-window-id=models]").style.width)');
   assert.ok(compactModels > 400, 'compact models preset is roomier than the opening width');

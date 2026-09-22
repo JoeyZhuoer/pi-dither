@@ -258,35 +258,11 @@ function updateUsageDiagram() {
   const agent = states.get(usageAgentId) || states.get('main');
   usageDiagram?.update(agent, connected);
 }
-function generatedSignal() {
-  // Local-only fingerprint of the newest generated text: the shape seeds the
-  // background wave and progress advances it as more text arrives. The hash
-  // never leaves the page and the text is never stored anywhere else.
-  let newest = null;
-  for (const state of states.values()) {
-    for (const message of state.messages) {
-      if (message.role !== 'assistant') continue;
-      const text = String(message.text || message.thinking || '');
-      if (!text) continue;
-      if (!newest || (message.at ?? 0) >= (newest.at ?? 0)) newest = message;
-    }
-  }
-  const text = String(newest?.text || newest?.thinking || '');
-  if (!text) return { shape: 0, progress: 0 };
-  let hash = 2166136261;
-  const opening = text.slice(0, 64);
-  for (let i = 0; i < opening.length; i++) hash = Math.imul(hash ^ opening.charCodeAt(i), 16777619);
-  return { shape: hash >>> 0, progress: text.length };
-}
 function updateFleet() {
   if (applyingSnapshot) return;
   const activity = aggregateActivity(states.values(), connected);
-  const signal = generatedSignal();
   background?.setActivity?.(activity);
-  background?.setSignal?.(signal.shape, signal.progress);
   $('#backdrop').dataset.activity = activity;
-  $('#backdrop').dataset.signal = String(signal.shape);
-  $('#backdrop').dataset.progress = String(signal.progress);
   observers.reconcile(states.get('main'), contextId, connected);
   features?.update(featureState());
   updateUsageDiagram();

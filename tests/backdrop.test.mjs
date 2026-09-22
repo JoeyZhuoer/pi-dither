@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
-import { drawBackdrop, flowOffset, startBackdrop } from '../desktop/public/backdrop.js';
+import { drawBackdrop, FLOW_RADIANS_PER_SECOND, startBackdrop } from '../desktop/public/backdrop.js';
 
 class Events {
   listeners = new Map();
@@ -367,11 +367,8 @@ test('activity patterns are deterministic and spatially distinct in the same pal
     const first = f.frames.at(-1);
     snapshots.push(first);
     drawBackdrop(f.canvas, 12, mode);
-    assert.deepEqual(f.frames.at(-1), first);
-    drawBackdrop(f.canvas, 12 + 1 / 12, mode);
-    const next = f.frames.at(-1);
-    assert.notDeepEqual(next.cells, first.cells);
-    assert.equal(next.color, '#20201f');
+    assert.deepEqual(f.frames.at(-1), first, 'the same inputs render the same pixels');
+    assert.equal(first.color, '#20201f');
   }
   for (let i = 0; i < snapshots.length; i++) for (let j = i + 1; j < snapshots.length; j++) {
     const changed = [...snapshots[i].cells].filter(cell => !snapshots[j].cells.has(cell)).length;
@@ -379,73 +376,93 @@ test('activity patterns are deterministic and spatially distinct in the same pal
   }
 });
 
-test('generated text seeds a traveling dither wave, and idle ignores the signal', () => {
+test('busy waves are time-invariant and travel one way through the frozen phase', () => {
   const f = fixture();
-  const frameAt = (time, mode, shape = 0, progress = 0) => { drawBackdrop(f.canvas, time, mode, shape, progress); return f.frames.at(-1); };
+  const frameAt = (time, mode, shift = 0) => { drawBackdrop(f.canvas, time, mode, shift); return f.frames.at(-1); };
   const fraction = (before, after) => changedCells(before, after) / (before.width * before.height);
-  // Identical inputs are deterministic; different generated text reshapes the wave.
-  assert.deepEqual(frameAt(6, 'thinking', 0x11112222), frameAt(6, 'thinking', 0x11112222));
-  assert.ok(fraction(frameAt(6, 'thinking', 0x11112222), frameAt(6, 'thinking', 0x77773333)) > .01, 'different generated text reshapes the wave');
-  // Wave shape matters on both busy modes.
-  assert.ok(fraction(frameAt(6, 'output', 0x11112222), frameAt(6, 'output', 0x77773333)) > .01, 'output waves are seeded too');
-  // More text arriving advances the wave even at the same animation time.
-  assert.ok(fraction(frameAt(6, 'output', 0x2468ace0, 0), frameAt(6, 'output', 0x2468ace0, 240)) > .01, 'arriving text advances the wave');
-  // The seeded wave travels with animation time as well.
-  assert.ok(fraction(frameAt(0, 'thinking', 0x2468ace0), frameAt(2, 'thinking', 0x2468ace0)) > .02, 'the wave moves along its path');
-  // Idle keeps the original pixels no matter what signal arrives.
-  assert.deepEqual(frameAt(9, 'idle'), frameAt(9, 'idle', 0xffffffff, 9999), 'idle ignores the generated-text signal');
+  // No vibration while generating: one phase means one set of pixels, whatever
+  // the animation time is.
+  for (const mode of ['thinking', 'output']) assert.deepEqual(frameAt(2, mode, 5), frameAt(37.5, mode, 5), `${mode} holds still between phase steps`);
+  // The band pattern advances in one steady direction: the demodulated phase
+  // at the band frequency decreases monotonically as the phase grows, and y
+  // grows downward, so both busy modes travel upward.
+  const demodulate = (frame, kx, ky) => {
+    let re = 0, im = 0;
+    for (const cell of frame.cells) {
+      const [x, y] = cell.split(',').map(Number);
+      const angle = kx * x + ky * y;
+      re += Math.cos(angle); im += Math.sin(angle);
+    }
+    return Math.atan2(im, re);
+  };
+  const unwrap = value => { while (value > Math.PI) value -= 2 * Math.PI; while (value < -Math.PI) value += 2 * Math.PI; return value; };
+  for (const [mode, kx, ky] of [['thinking', .25, .19], ['output', 0, .34]]) {
+    const base = frameAt(0, mode, 0);
+    const readings = [.5, 1, 1.5].map(shift => unwrap(demodulate(frameAt(0, mode, shift), kx, ky) - demodulate(base, kx, ky)));
+    assert.ok(readings[0] < 0 && readings[1] < readings[0] && readings[2] < readings[1], `${mode} travels steadily in one direction (${readings.map(value => value.toFixed(2)).join(', ')})`);
+    assert.ok(Math.abs(readings[2]) >= .4, `${mode} moves measurably (${Math.abs(readings[2]).toFixed(2)} rad)`);
+  }
+  // Adjacent phase steps change a small part of the dither and never re-dither
+  // it wholesale across a cycle.
+  const step = FLOW_RADIANS_PER_SECOND / 12;
+  for (const mode of ['thinking', 'output']) {
+    let largest = 0, smallest = 1;
+    for (let i = 0; i < 24; i++) {
+      const moved = fraction(frameAt(0, mode, i * step), frameAt(0, mode, (i + 1) * step));
+      largest = Math.max(largest, moved); smallest = Math.min(smallest, moved);
+    }
+    assert.ok(smallest > 0, `${mode} keeps moving`);
+    assert.ok(largest < .09, `${mode} has no re-dither pop (largest ${(largest * 100).toFixed(1)}%)`);
+  }
+  // Any phase keeps the pattern on canvas.
+  const area = f.canvas.width * f.canvas.height;
+  for (const mode of ['thinking', 'output']) for (const shift of [0, 12, 120, 1200]) {
+    const frame = frameAt(0, mode, shift);
+    assert.ok(frame.cells.size > 200 && frame.cells.size < area, `${mode} stays on canvas at phase ${shift}`);
+  }
 });
 
-test('idle shimmers in place while busy fields drift smoothly with small per-frame changes', () => {
+test('idle keeps its shimmer and holds the phase where generation stopped', () => {
   const f = fixture();
-  const frameAt = (time, mode) => { drawBackdrop(f.canvas, time, mode); return f.frames.at(-1); };
-  const changedFraction = (before, after) => changedCells(before, after) / (before.width * before.height);
-  // The stopped field keeps its original slow shimmer and never drifts.
-  const idleMoved = changedFraction(frameAt(40, 'idle'), frameAt(40 + 1 / 12, 'idle'));
-  assert.ok(idleMoved < .02, 'idle only shimmers in place');
-  assert.equal(bestTravel(frameAt(0, 'idle'), frameAt(3, 'idle'), 1), 0, 'idle does not drift');
-  // Busy fields flow gently: each frame changes only a small part of the
-  // dither, clearly more than idle, but nothing like a whole-band jump.
-  for (const mode of ['thinking', 'output']) {
-    const moved = changedFraction(frameAt(7, mode), frameAt(7 + 1 / 12, mode));
-    assert.ok(moved > idleMoved * 3 && moved < .05, `${mode} flows with small per-frame changes (${(moved * 100).toFixed(1)}%)`);
-    for (const axis of [0, 1]) assert.ok(Math.abs(bestTravel(frameAt(7, mode), frameAt(7 + 1 / 12, mode), axis)) <= 1, `${mode} never jumps in one frame`);
-    // A whole-cell crossing must not re-dither the field.
-    let largest = 0;
-    for (let step = 0; step < 24; step++) largest = Math.max(largest, changedFraction(frameAt(step / 12, mode), frameAt((step + 1) / 12, mode)));
-    assert.ok(largest < .05, `${mode} has no re-dither pop (largest ${(largest * 100).toFixed(1)}%)`);
-  }
-  // Over several seconds the drift path keeps moving: output rises, thinking
-  // wanders on both axes, and both stay inside a bounded canvas-relative path.
-  const drift = (mode, time) => flowOffset(mode, time, f.canvas.width, f.canvas.height);
-  const rise = drift('output', 3).y - drift('output', 0).y;
-  assert.ok(rise >= 2, `output drifts upward (${rise.toFixed(2)} cells over 3s)`);
-  const wander = drift('thinking', 0), later = drift('thinking', 1.5);
-  assert.ok(Math.hypot(later.x - wander.x, later.y - wander.y) >= 1, 'thinking drifts sideways');
-  assert.equal(drift('idle', 5), null, 'idle has no drift offset');
-  for (const mode of ['thinking', 'output']) {
-    let largest = 0, reach = 0;
-    for (let step = 0; step <= 2400; step++) {
-      const current = drift(mode, step / 12);
-      const previous = drift(mode, (step - 1) / 12);
-      if (step) largest = Math.max(largest, Math.hypot(current.x - previous.x, current.y - previous.y));
-      reach = Math.max(reach, Math.hypot(current.x, current.y));
-    }
-    assert.ok(largest <= .3, `${mode} moves a little each frame (${largest.toFixed(2)} cells)`);
-    assert.ok(reach <= Math.max(f.canvas.width, f.canvas.height) * .55, `${mode} drift stays bounded (${reach.toFixed(1)} cells)`);
-  }
-  // The drift path is bounded, so the pattern always stays on canvas.
-  const area = f.canvas.width * f.canvas.height;
-  for (const time of [0, 40, 90, 180, 400]) for (const mode of ['thinking', 'output']) {
-    const frame = frameAt(time, mode);
-    assert.ok(frame.cells.size > 200 && frame.cells.size < area, `${mode} stays on canvas at ${time}s`);
-  }
+  const frameAt = (time, mode, shift = 0) => { drawBackdrop(f.canvas, time, mode, shift); return f.frames.at(-1); };
+  const fraction = (before, after) => changedCells(before, after) / (before.width * before.height);
+  // Idle still shimmers from frame to frame, exactly as before.
+  const shimmer = fraction(frameAt(40, 'idle'), frameAt(40 + 1 / 12, 'idle'));
+  assert.ok(shimmer > 0 && shimmer < .02, 'idle shimmers in place');
+  // A frozen phase is part of the idle pixels, so stopping never snaps back.
+  assert.notDeepEqual(frameAt(41, 'idle', 3.7), frameAt(41, 'idle', 0), 'idle honors the stopped phase');
+  assert.ok(fraction(frameAt(41, 'idle', 3.7), frameAt(41, 'idle', 0)) > .01, 'the frozen phase is visible');
+  // Idle holds its position: no travel of its own.
+  assert.equal(bestTravel(frameAt(0, 'idle', 3.7), frameAt(3, 'idle', 3.7), 1), 0, 'idle holds position');
+});
+
+test('background phase advances only while busy and freezes in place when work stops', () => {
+  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
+  const tick = FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000);
+  let shift = 0;
+  controller.setActivity('thinking');
+  f.advance(500);
+  for (let i = 0; i < 6; i++) shift += tick;
+  // Switching to idle keeps that phase and only shimmers from here on.
+  controller.setActivity('idle');
+  f.advance(1000);
+  let ticks = 18;
+  drawBackdrop(reference.canvas, ticks / 12, 'idle', shift);
+  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'idle continues at the frozen busy phase');
+  // Busy again resumes travel from that same phase.
+  controller.setActivity('output');
+  f.advance(250);
+  for (let i = 0; i < 3; i++) shift += tick;
+  ticks += 3;
+  drawBackdrop(reference.canvas, ticks / 12, 'output', shift);
+  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'resuming continues the one-way travel');
+  controller.destroy(); assertDisposed(f);
 });
 
 test('activity transitions coalesce, normalize invalid modes and never schedule extra work', () => {
   const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
-  controller.setSignal(0x1234abcd, 512);
-  let ticks = 0;
+  const tick = FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000);
+  let ticks = 0, shift = 0;
   for (const mode of ['thinking', 'output', 'idle', 'bogus', 'output']) {
     const count = f.frames.length;
     for (let i = 0; i < 20; i++) controller.setActivity(mode);
@@ -453,30 +470,13 @@ test('activity transitions coalesce, normalize invalid modes and never schedule 
     assert.equal(f.timers.size, 1);
     f.advance(1000 / 12);
     ticks++;
-    drawBackdrop(reference.canvas, ticks / 12, mode, 0x1234abcd, 512);
+    if (mode === 'thinking' || mode === 'output') shift += tick;
+    drawBackdrop(reference.canvas, ticks / 12, mode, shift);
     assert.deepEqual(f.frames.at(-1), reference.frames.at(-1));
   }
   assert.equal(f.maxTimers, 1);
   controller.destroy(); controller.setActivity('thinking');
   assertDisposed(f);
-});
-
-test('generated-text signal updates coalesce, normalize invalid input and stay inert while stopped', () => {
-  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
-  const count = f.frames.length;
-  for (let i = 0; i < 20; i++) controller.setSignal(i % 2 ? 0xabcdef01 : NaN, i % 2 ? 300 : -1);
-  assert.equal(f.frames.length, count, 'signal changes never draw outside the cadence');
-  assert.equal(f.timers.size, 1);
-  for (let i = 0; i < 5; i++) controller.setSignal(undefined, undefined);
-  f.advance(1000 / 12);
-  drawBackdrop(reference.canvas, 1 / 12, 'idle', 0, 0);
-  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'invalid signal input returns to the original field');
-  controller.setPaused(true);
-  const paused = f.frames.length;
-  controller.setSignal(0x12345678, 999);
-  f.advance(5000);
-  assert.equal(f.frames.length, paused, 'a stopped background does not react to the signal');
-  controller.destroy(); assertDisposed(f);
 });
 
 for (const stop of ['manual', 'hidden', 'reduced']) {
@@ -497,7 +497,7 @@ for (const stop of ['manual', 'hidden', 'reduced']) {
     if (stop === 'hidden') f.visibility(false);
     if (stop === 'reduced') f.reduction(false);
     f.advance(100);
-    drawBackdrop(reference.canvas, 1 / 12, 'output');
+    drawBackdrop(reference.canvas, 1 / 12, 'output', FLOW_RADIANS_PER_SECOND * ((1000 / 12) / 1000));
     assert.deepEqual(f.frames.at(-1), reference.frames[0]);
     assert.equal(f.maxTimers, 1);
     controller.destroy(); assertDisposed(f);
