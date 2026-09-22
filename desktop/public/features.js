@@ -1,5 +1,6 @@
 import { syncCombobox } from './combobox.js';
 import { DEFAULT_GROUND, DEFAULT_THEME } from './background.js';
+import { PARTICLE_MODES } from './particles.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
@@ -101,7 +102,7 @@ export function installUsageDiagram(root, openUsage) {
 }
 
 /** Utility windows issue metadata/control requests only; they never send model prompts. */
-export function installFeatureWindows({ windows, api, toast = () => {}, getState, background }) {
+export function installFeatureWindows({ windows, api, toast = () => {}, getState, background, particles }) {
   let state = getState() || { agents: [], connected: false }, disposed = false, mutation = false;
   const events = new AbortController(), panels = new Map(), guards = new Map();
   const agents = () => state.agents || [];
@@ -350,6 +351,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   const groundInput = field(backgroundForm, 'Ground colour', 'background-ground', 'color');
   const photoInput = field(backgroundForm, 'Photo', 'background-photo', 'file');
   photoInput.accept = 'image/*';
+  const particleInput = field(backgroundForm, 'Particles', 'background-particles', 'select');
   const usesBackground = () => !!background;
   const themeDefault = button('Default theme', 'background-theme-reset', () => {
     if (!background) return;
@@ -368,10 +370,16 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   });
   backgroundForm.append(themeDefault, groundDefault, photoRemove);
   for (const element of [themeInput, groundInput, photoInput, themeDefault, groundDefault, photoRemove]) guard(element, usesBackground);
+  guard(particleInput, () => !!particles);
   on(themeInput, 'input', () => { if (background) background.setTheme(themeInput.value); });
   on(themeInput, 'change', () => { if (background) message(backgroundPanel, `Theme colour ${background.state.theme}.`); });
   on(groundInput, 'input', () => { if (background) background.setGround(groundInput.value); });
   on(groundInput, 'change', () => { if (background) message(backgroundPanel, `Ground colour ${background.state.ground}.`); });
+  on(particleInput, 'change', () => {
+    if (!particles) return;
+    choices(particleInput, Object.keys(PARTICLE_MODES).map((mode) => [mode, mode === 'off' ? 'Off' : mode[0].toUpperCase() + mode.slice(1)]), particleInput.value);
+    message(backgroundPanel, `Particles ${particles.setMode(particleInput.value)}.`);
+  });
   on(photoInput, 'change', () => {
     const file = photoInput.files && photoInput.files[0];
     if (!background || !file) return;
@@ -386,6 +394,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (!background) return;
     themeInput.value = background.state.theme;
     groundInput.value = background.state.ground;
+    if (particles) choices(particleInput, Object.keys(PARTICLE_MODES).map((mode) => [mode, mode === 'off' ? 'Off' : mode[0].toUpperCase() + mode.slice(1)]), particles.mode);
   };
 
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.

@@ -141,6 +141,19 @@ try {
     await evaluate(`{ const input = document.querySelector('[data-testid="background-theme"]'); input.value = '#2a4b6c'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
     assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--pink").trim()'), '#2a4b6c');
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#2a4b6c');
+    // Particle field: third state in the Appearance window.
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'dense'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'dense');
+    const particlePixels = () => `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) inked++; return inked; })()`;
+    await until(`${particlePixels()} > 50`);
+    assert.ok(await evaluate(`${particlePixels()} > 50`), 'particles draw onto their own layer');
+    const particlesBefore = await evaluate(particlePixels());
+    await until(`${particlePixels()} !== ${particlesBefore}`);
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 400, clientY: 300, bubbles: true }))`);
+    await until(`${particlePixels()} > 50`);
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'off'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'off', 'particles can be switched off');
+    assert.equal(await evaluate(particlePixels()), 0, 'the particle layer clears when off');
     await evaluate(`document.querySelector('[data-testid="background-theme-reset"]').click()`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#e58da5', 'default theme is restored');
     await evaluate(`document.querySelector('[data-testid="background-default"]').click()`);
@@ -173,6 +186,8 @@ try {
     const canvasHash = `(() => { const c = document.querySelector('#background'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i], 16777619); return h; })()`;
     await evaluate(`(async () => { const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); }); const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'ripple.png', { type: 'image/png' })); const input = document.querySelector('[data-testid="background-photo"]'); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
+    // Earlier pointer moves may still be rippling; wait for the true base first.
+    await evaluate('new Promise((resolve) => setTimeout(resolve, 900))');
     const basePattern = await evaluate(canvasHash);
     await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }))`);
     await until(`${canvasHash} !== ${basePattern}`);
@@ -331,7 +346,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, plain background and fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, dithered photo, particle field, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

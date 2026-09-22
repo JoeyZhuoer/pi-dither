@@ -3,6 +3,7 @@ import { installDelegatedObservers, aggregateActivity, delegationNotice, delegat
 import { renderMarkdown } from './markdown.js';
 import { installFeatureWindows, installUsageDiagram } from './features.js';
 import { createBackground } from './background.js';
+import { createParticles } from './particles.js';
 import { createInspectionPanel } from './inspection.js';
 import { installComboboxes, syncCombobox } from './combobox.js';
 
@@ -393,9 +394,10 @@ async function eventStream() {
 
 createAgentPanel('main', 'Main agent', 'main');
 installComboboxes(document);
-// Static background: persisted ground color plus an optional dithered photo.
+// Static background (theme/ground/photo) plus an optional particle field.
 const background = createBackground({ canvas: $('#background'), storage: localStorage });
-features = installFeatureWindows({ windows, api, toast, getState: featureState, background });
+const particles = createParticles({ canvas: $('#particles'), storage: localStorage });
+features = installFeatureWindows({ windows, api, toast, getState: featureState, background, particles });
 usageDiagram = installUsageDiagram($('#usage-diagram'), () => {
   if (desktopVersion) features.open('usage');
   else toast('Detailed usage requires the v0.3 desktop server.');

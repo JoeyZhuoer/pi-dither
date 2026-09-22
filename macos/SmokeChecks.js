@@ -1,9 +1,9 @@
 // Loaded into a nonpersistent WKWebView only by --smoke-test. No provider prompts.
 async function piDitherSmoke(stage) {
   const check = (ok, message) => { if (!ok) throw new Error(message); };
-  const wait = async predicate => {
+  const wait = async (predicate, label = 'condition') => {
     for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 40)); }
-    throw new Error('Native feature condition did not settle');
+    throw new Error('Native feature condition did not settle: ' + label);
   };
   const $ = selector => document.querySelector(selector);
   const main = $('.main-window');
@@ -60,7 +60,7 @@ async function piDitherSmoke(stage) {
     const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); });
     const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
     photo.files = transfer.files; photo.dispatchEvent(new Event('change', { bubbles: true }));
-    await wait(() => localStorage.getItem('pi-desktop:photo:v1') !== null);
+    await wait(() => localStorage.getItem('pi-desktop:photo:v1') !== null, 'photo stored');
     const canvas = $('#background'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let inkCount = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 32 && pixels[i + 1] === 32 && pixels[i + 2] === 31) inkCount++;
     check(inkCount > pixels.length / 4 * .15 && inkCount < pixels.length / 4 * .6, `photo dithers into ink (${inkCount})`);
@@ -69,13 +69,29 @@ async function piDitherSmoke(stage) {
     theme.value = '#2a4b6c'; theme.dispatchEvent(new Event('input', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:theme:v1') === '#2a4b6c', 'theme colour persists');
     check(getComputedStyle(document.documentElement).getPropertyValue('--pink').trim() === '#2a4b6c', 'theme colour applies to the chrome');
+    // Particle field: drifting dots, links, pointer stir and collision flashes.
+    const particleSelect = $('[data-testid="background-particles"]');
+    particleSelect.value = 'dense'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'dense', 'particle density persists');
+    const particleInk = () => { const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) inked++; return inked; };
+    await wait(() => particleInk() > 50, 'particles draw');
+    check(particleInk() > 50, 'particles draw on their own layer');
+    const particlesBefore = particleInk();
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 380, clientY: 260, bubbles: true }));
+    await wait(() => particleInk() !== particlesBefore, 'particles animate');
+    check(particleInk() !== particlesBefore, 'the pointer stirs and the field keeps animating');
+    particleSelect.value = 'off'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'off', 'particles can be switched off');
+    check(particleInk() === 0, 'the particle layer clears when off');
     // Pointer ripple over the dithered dots: spread, then settle back exactly.
     const canvasHash = () => { const c = $('#background'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i], 16777619); return hash; };
+    // Earlier pointer moves may still be rippling; wait for the true base first.
+    await new Promise(resolve => setTimeout(resolve, 900));
     const basePattern = canvasHash();
     document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }));
-    await wait(() => canvasHash() !== basePattern);
+    await wait(() => canvasHash() !== basePattern, 'ripple spreads');
     check(canvasHash() !== basePattern, 'the dots spread under the pointer');
-    await wait(() => canvasHash() === basePattern);
+    await wait(() => canvasHash() === basePattern, 'ripple restores');
     check(canvasHash() === basePattern, 'the dots settle back exactly');
     $('[data-testid="background-remove"]').click();
     check(localStorage.getItem('pi-desktop:photo:v1') === null, 'photo removal clears storage');
