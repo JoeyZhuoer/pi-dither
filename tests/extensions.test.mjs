@@ -33,23 +33,35 @@ test('desktop extension discovery is explicit, local, main-only and honors disab
     await assert.rejects(desktopExtensions({ agentDir: root, kind: 'main', env: {} }), /within its package/);
     manifest.name = 'different-package'; await writeFile(join(pkg, 'package.json'), JSON.stringify(manifest));
     await assert.rejects(desktopExtensions({ agentDir: root, kind: 'main', env: {} }), /Expected/);
+    // A profile that configures and installs its own package is left to normal
+    // discovery: no explicit path is returned, so pi-subagents cannot load twice.
+    manifest.name = 'pi-subagents'; manifest.pi.extensions = ['./index.js'];
+    await writeFile(join(pkg, 'package.json'), JSON.stringify(manifest));
+    await writeFile(join(root, 'settings.json'), JSON.stringify({ packages: ['npm:pi-subagents'] }));
+    const selfProvided = await desktopExtensions({ agentDir: root, kind: 'main', env: {} });
+    assert.deepEqual(selfProvided.paths, []); assert.equal(selfProvided.status, 'loaded');
+    assert.match(selfProvided.message, /profile/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('catalog admits approved extension provenance only for main, without exposing paths or schemas', () => {
+test('catalog exposes every loaded main tool and keeps the subagent read-only ceiling', () => {
   const path = '/approved/index.ts'; let active = [];
   const session = { sessionId: 'one', isIdle: true, pendingMessageCount: 0,
     getAllTools: () => [
       { name: 'read', description: 'Read', sourceInfo: { source: 'builtin' } },
       { name: 'subagent', description: 'Delegate', parameters: {}, sourceInfo: { source: 'cli', path } },
-      { name: 'other', description: 'Not approved', sourceInfo: { source: 'cli', path: '/other/index.ts' } },
+      { name: 'web_search', description: 'Search', sourceInfo: { source: 'cli', path: '/other/index.ts' } },
     ], getActiveToolNames: () => active, setActiveToolsByName: names => { active = names; },
   };
-  assert.deepEqual(toolCatalog(session, 'main', [path]), [{ name: 'read', description: 'Read' }, { name: 'subagent', description: 'Delegate' }]);
-  assert.deepEqual(toolCatalog(session, 'subagent', [path]), [{ name: 'read', description: 'Read' }]);
-  assert.throws(() => setSessionTools(session, 'subagent', { sessionId: 'one', tools: ['subagent'] }, [path]), /Subagents/);
-  assert.deepEqual(setSessionTools(session, 'main', { sessionId: 'one', tools: ['subagent'] }, [path]), ['subagent']);
-  assert.deepEqual(setSessionTools(session, 'main', { sessionId: 'one', tools: [] }, [path]), []);
+  assert.deepEqual(toolCatalog(session, 'main'), [
+    { name: 'read', description: 'Read' },
+    { name: 'subagent', description: 'Delegate' },
+    { name: 'web_search', description: 'Search' },
+  ]);
+  assert.deepEqual(toolCatalog(session, 'subagent'), [{ name: 'read', description: 'Read' }]);
+  assert.throws(() => setSessionTools(session, 'subagent', { sessionId: 'one', tools: ['subagent'] }), /Subagents/);
+  assert.deepEqual(setSessionTools(session, 'main', { sessionId: 'one', tools: ['subagent', 'web_search'] }), ['subagent', 'web_search']);
+  assert.deepEqual(setSessionTools(session, 'main', { sessionId: 'one', tools: [] }), []);
 });
 
 test('extension notifications are bounded, visible custom messages hydrate once, hidden context stays hidden', () => {
@@ -69,10 +81,13 @@ test('extension notifications are bounded, visible custom messages hydrate once,
 test('installed pi-subagents: real RPC defaults, selection, dynamic supervisor/new/clone, restricted children; no prompts', { skip: !installed, timeout: 90_000 }, async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'pi-ext-rpc-'))), sessionDir = join(root, 'sessions'), profile = join(root, 'profile');
   await mkdir(sessionDir); await mkdir(profile);
-  // Ambient/project extensions must remain disabled even while the supported package loads.
-  for (const path of [join(profile, 'extensions'), join(root, '.pi/extensions')]) {
-    await mkdir(path, { recursive: true }); await writeFile(join(path, 'unrelated.ts'), 'throw new Error("UNRELATED EXTENSION LOADED");');
-  }
+  // The profile's own extensions load with normal package discovery while project
+  // extensions stay untrusted. Both fixtures throw, which must be reported rather
+  // than fatal; only the profile copy may appear in the load errors.
+  await mkdir(join(profile, 'extensions'), { recursive: true });
+  await writeFile(join(profile, 'extensions', 'unrelated.ts'), 'throw new Error("UNRELATED PROFILE EXTENSION LOADED");');
+  await mkdir(join(root, '.pi', 'extensions'), { recursive: true });
+  await writeFile(join(root, '.pi', 'extensions', 'unrelated.ts'), 'throw new Error("UNRELATED PROJECT EXTENSION LOADED");');
   await writeFile(join(profile, 'settings.json'), '{"compaction":{"enabled":false}}');
   const settingsBefore = await readFile(join(profile, 'settings.json'), 'utf8');
   const env = { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: profile, PI_OFFLINE: '1', PI_DESKTOP_SUBAGENTS_ROOT: installedRoot };
@@ -86,6 +101,8 @@ test('installed pi-subagents: real RPC defaults, selection, dynamic supervisor/n
       assert.ok(main.state.availableTools.some(tool => tool.name === name), `catalog exposes ${name}`);
     }
     assert.equal(main.state.extensionStatus.status, 'loaded');
+    assert.match(main.state.extensionStatus.loadErrors ?? '', /UNRELATED PROFILE EXTENSION LOADED/, 'the profile extension is discovered');
+    assert.doesNotMatch(main.state.extensionStatus.loadErrors ?? '', /UNRELATED PROJECT EXTENSION LOADED/, 'the project extension stays untrusted');
     assert.ok((await main.command('get_commands')).commands.some(c => c.name === 'subagents-guide'));
     const selection = ['read', 'subagent', 'bg_wait', 'subagent_supervisor'];
     await main.act('tools', { tools: selection }); await main.act('new', {});

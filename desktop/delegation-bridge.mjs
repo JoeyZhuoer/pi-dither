@@ -161,9 +161,13 @@ export class DelegationBridge {
 // Command definitions are part of Pi's public LoadExtensionsResult. Select only
 // the explicitly allowlisted installed package, never a same-named prompt or an
 // ambient command. Calling the handler cannot fall through to model prompting.
-export function findInspectCommand(extensions, paths) {
+export function findInspectCommand(extensions, paths = []) {
+  const approved = new Set(paths);
   for (const extension of extensions ?? []) {
-    if (!paths.includes(extension.resolvedPath) && !paths.includes(extension.path)) continue;
+    const extensionPath = String(extension?.resolvedPath ?? extension?.path ?? '');
+    // Explicitly supplied paths, or the installed pi-subagents package the user
+    // configured in their own profile (normal package discovery).
+    if (!approved.has(extension?.resolvedPath) && !approved.has(extension?.path) && !/[\\/]pi-subagents[\\/]/.test(extensionPath)) continue;
     const command = extension.commands?.get('subagents-inspect-rpc');
     if (typeof command?.handler === 'function') return command;
   }

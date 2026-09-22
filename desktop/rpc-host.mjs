@@ -44,8 +44,12 @@ const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
       cwd, agentDir, modelRuntime: models,
       settingsManager: pi.SettingsManager.create(cwd, agentDir, { projectTrusted: false }),
       resourceLoaderOptions: {
-        noExtensions: true, noThemes: true,
-        // Pi's noExtensions suppresses discovery, not explicitly supplied paths.
+        // The main agent loads every installed package from the (untrusted)
+        // profile normally. Subagent windows stay restricted to their built-in
+        // read-only tools with no discovered extensions or themes.
+        ...(config.kind === 'main' ? {} : { noExtensions: true, noThemes: true }),
+        // Explicitly supplied paths are added on top of normal package discovery;
+        // the bundled pi-subagents copy is used only as a fallback.
         additionalExtensionPaths: extensionPaths,
         extensionFactories: [{ name: 'desktop-tool-selection', factory(api) {
           // Loaded last: pi-subagents registers its supervisor tool on session_start.
@@ -57,7 +61,7 @@ const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
             toolSetupError = undefined;
             try {
               if (selectedTools !== undefined) api.setActiveTools(validateToolSelection(selectedTools,
-                toolCatalog({ getAllTools: () => api.getAllTools() }, config.kind, extensionPaths), config.kind));
+                toolCatalog({ getAllTools: () => api.getAllTools() }, config.kind), config.kind));
               selectedTools = api.getActiveTools(); toolRevision++;
             } catch (error) { api.setActiveTools([]); toolSetupError = error; }
             if (config.kind !== 'main') return;
@@ -75,7 +79,14 @@ const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
       },
     });
     const loadErrors = services.resourceLoader.getExtensions().errors;
-    if (loadErrors.length) throw new Error(`Desktop extension load failed: ${loadErrors.map((item) => item.error).join('; ')}`);
+    if (loadErrors.length) {
+      const detail = loadErrors.map((item) => String(item.error)).join('; ').slice(0, 1200);
+      // A broken user package must not brick the desktop; report it in the status
+      // instead. Subagent windows never load packages, so they stay strict.
+      if (config.kind !== 'main') throw new Error(`Desktop extension load failed: ${detail}`);
+      extensionStatus.loadErrors = detail;
+      extensionStatus.message = `${extensionStatus.message} ${loadErrors.length} package/extension error(s): ${detail}`.slice(0, 2200);
+    }
     const result = await pi.createAgentSessionFromServices({
       services, sessionManager, sessionStartEvent,
       ...(config.kind === 'main' ? {} : { tools: READ_ONLY_TOOLS }),
@@ -100,11 +111,11 @@ process.on('message', (message) => {
     const session = runtime.session;
     if (message.action === 'set') {
       if (message.revision !== toolRevision) throw new Error('Tool state changed. Refresh before applying.');
-      selectedTools = setSessionTools(session, config.kind, message, extensionPaths);
+      selectedTools = setSessionTools(session, config.kind, message);
       toolRevision++;
     } else if (message.action !== 'get') throw new Error('Unsupported private tool action.');
     response.data = { sessionId: session.sessionId, revision: toolRevision,
-      availableTools: toolCatalog(session, config.kind, extensionPaths), activeTools: session.getActiveToolNames(), extensionStatus };
+      availableTools: toolCatalog(session, config.kind), activeTools: session.getActiveToolNames(), extensionStatus };
     response.success = true;
   } catch (error) { response.success = false; response.error = error.message; }
   if (process.connected) process.send(response, () => {});

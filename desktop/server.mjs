@@ -16,7 +16,7 @@ const publicRoot = join(root, 'desktop/public');
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css']], ['/app.js', ['app.js', 'text/javascript']],
-  ['/windows.js', ['windows.js', 'text/javascript']], ['/backdrop.js', ['backdrop.js', 'text/javascript']],
+  ['/windows.js', ['windows.js', 'text/javascript']],
   ['/delegated.js', ['delegated.js', 'text/javascript']],
   ['/inspection.js', ['inspection.js', 'text/javascript']], ['/inspection.css', ['inspection.css', 'text/css']],
   ['/combobox.js', ['combobox.js', 'text/javascript']], ['/combobox.css', ['combobox.css', 'text/css']],

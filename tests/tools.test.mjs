@@ -28,7 +28,9 @@ function sdkFixture() {
 
 test('tools validation and SDK host checks reject malicious, stale, busy and queued inputs before mutation', () => {
   const session = sdkFixture();
-  assert.deepEqual(toolCatalog(session, 'main'), catalog);
+  // The main catalog is whatever the session loaded, including SDK/extension tools.
+  assert.deepEqual(toolCatalog(session, 'main').map((tool) => tool.name), [...catalog.map((tool) => tool.name), 'custom']);
+  assert.ok(toolCatalog(session, 'main').every((tool) => Object.keys(tool).sort().join() === 'description,name'), 'no paths or schemas leak');
   assert.deepEqual(toolCatalog(session, 'subagent').map((tool) => tool.name).sort(), [...READ_ONLY_TOOLS].sort());
   for (const tools of badTools) assert.throws(() => setSessionTools(session, 'main', { tools, sessionId: session.sessionId }));
   for (const tools of [['bash'], ['write'], ['edit'], ['custom']]) assert.throws(() => setSessionTools(session, 'subagent', { tools, sessionId: session.sessionId }));

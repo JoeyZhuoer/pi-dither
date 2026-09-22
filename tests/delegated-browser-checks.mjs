@@ -19,17 +19,17 @@ export async function checkDelegatedBrowser({ app, evaluate, until, rpc }) {
     finalOutput: '', error: null, updatedAt: Date.now() });
   try {
     publish({ sessionId: 'fixture-delegated-parent', phase: 'running', activityMode: 'thinking', delegations: [] });
-    await until('document.querySelector("#backdrop").dataset.activity === "thinking"');
+    await until('document.querySelector("#desktop").dataset.activity === "thinking"');
     publish({ activityMode: 'output' });
-    await until('document.querySelector("#backdrop").dataset.activity === "output"');
+    await until('document.querySelector("#desktop").dataset.activity === "output"');
     publish({ phase: 'idle', activityMode: 'idle' });
-    await until('document.querySelector("#backdrop").dataset.activity === "idle"');
+    await until('document.querySelector("#desktop").dataset.activity === "idle"');
 
     const first = row('fixture-foreground', 'foreground', 'thinking');
     const second = row('fixture-async', 'async', 'output');
     publish({ delegations: [first, second] });
     await until('document.querySelectorAll("[data-delegation-id]").length === 2');
-    await until('document.querySelector("#backdrop").dataset.activity === "output"');
+    await until('document.querySelector("#desktop").dataset.activity === "output"');
     assert.equal(app.sessions.size, count, 'observer creation does not spawn manual sessions');
     assert.equal(await evaluate('document.querySelectorAll("[data-delegation-id][data-subagent-index]").length'), 0, 'observers do not reserve manual slots');
     assert.equal(await evaluate('document.querySelectorAll("[data-delegation-id] textarea, [data-delegation-id] .model-select, [data-delegation-id] .send, [data-delegation-id] .tool-settings").length'), 0, 'observer windows cannot send tasks or change tools');
@@ -86,7 +86,7 @@ export async function checkDelegatedBrowser({ app, evaluate, until, rpc }) {
     second.status = 'failed'; second.phase = 'idle'; second.error = 'Synthetic child failure';
     publish({ delegations: [first, second] });
     await until(`${element(first.id)}.textContent.includes('Completed foreground report') && ${element(second.id)}.textContent.includes('Synthetic child failure')`);
-    await until('document.querySelector("#backdrop").dataset.activity === "idle"');
+    await until('document.querySelector("#desktop").dataset.activity === "idle"');
 
     await evaluate(`${element(first.id)}.querySelector('button[aria-label^="Close"]').click()`);
     await until(`${element(first.id)} === null`);

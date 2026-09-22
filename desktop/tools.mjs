@@ -12,10 +12,11 @@ export function validateToolSelection(tools, availableTools, kind) {
 }
 
 // Strip schemas and source paths; the SDK registry, not a fabricated list, supplies availability.
-export function toolCatalog(session, kind, extensionPaths = []) {
+// The main agent may use every loaded tool, including tools contributed by any
+// installed package. Read-only subagent windows keep their built-in ceiling.
+export function toolCatalog(session, kind) {
   return session.getAllTools().filter((tool) => kind === 'main'
-    ? tool.sourceInfo?.source === 'builtin' || extensionPaths.includes(tool.sourceInfo?.path)
-    : tool.sourceInfo?.source === 'builtin' && READ_ONLY_TOOLS.includes(tool.name))
+    || (tool.sourceInfo?.source === 'builtin' && READ_ONLY_TOOLS.includes(tool.name)))
     .map(({ name, description }) => ({ name, description }));
 }
 
@@ -26,10 +27,10 @@ export function assertToolChangeReady(state) {
 }
 
 // All checks and the synchronous public SDK setter run in one event-loop turn.
-export function setSessionTools(session, kind, input, extensionPaths = []) {
+export function setSessionTools(session, kind, input) {
   if (input.sessionId !== session.sessionId) throw new Error('Agent session changed. Refresh before changing tools.');
   if (!session.isIdle || session.pendingMessageCount !== 0) throw new Error('Tool changes require an idle session with an empty queue.');
-  const tools = validateToolSelection(input.tools, toolCatalog(session, kind, extensionPaths), kind);
+  const tools = validateToolSelection(input.tools, toolCatalog(session, kind), kind);
   session.setActiveToolsByName(tools);
   return session.getActiveToolNames();
 }

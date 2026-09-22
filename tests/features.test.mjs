@@ -171,12 +171,13 @@ test('feature controller preserves drafts, targets selected agents, protects cre
   }
 });
 
-test('feature menu replaces manager with Tools and Help exposes an unwired motion button', async () => {
+test('feature menu replaces manager with Tools and Help documents the plain background', async () => {
   const html = await readFile(new URL('../desktop/public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /data-feature="windows"|Window manager|window management/);
   assert.match(html, /data-feature="tools"/);
   assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
-  assert.match(html, /id="background-motion" type="button" aria-pressed="false">Pause background motion/);
+  assert.doesNotMatch(html, /background-motion|id="backdrop"/);
+  assert.match(html, /plain dusty-pink ground/);
 });
 
 test('Tools drafts, authoritative Apply, guards, empty catalogs and stale responses (no provider)', async (t) => {

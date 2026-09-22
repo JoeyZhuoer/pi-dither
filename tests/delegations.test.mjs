@@ -135,6 +135,7 @@ test('bridge discovers only via bus, executes allowlisted read-only inspect hand
   assert.deepEqual(emitter.eventNames(), ['subagents:rpc:v1:request']);
   bridge.dispose();
   assert.equal(findInspectCommand([{ path: '/ambient', commands: new Map([['subagents-inspect-rpc', { handler() {} }]]) }], ['/installed']), null);
+  assert.ok(findInspectCommand([{ path: '/home/user/.pi/agent/npm/node_modules/pi-subagents/src/extension/index.ts', commands: new Map([['subagents-inspect-rpc', { handler() {} }]]) }], []), 'a profile-discovered pi-subagents package is matched');
 });
 
 test('bridge timeout is nonfatal, stops reissuing in-flight work, rejects stale replies and session replacement', async () => {

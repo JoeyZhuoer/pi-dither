@@ -21,11 +21,10 @@ async function piDitherSmoke(stage) {
     check(!location.hash && document.querySelectorAll('[data-subagent-index]').length === 0, 'no startup drafts or visible auth fragment');
     check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');
     check(saved().main.sizeMode === 'auto' && width() === 610, 'main opens at the minimum width');
-    check($('#backdrop').dataset.activity === 'idle', 'background reports idle activity while the model is stopped');
-    check($('#backdrop').dataset.running === String($('#background-motion').getAttribute('aria-pressed') !== 'true'), 'animation follows the motion preference');
+    check(!$('#backdrop, #background-motion'), 'no background pattern or motion control is rendered');
+    check($('#desktop').dataset.activity === 'idle', 'fleet activity reports idle while the model is stopped');
     if (window.piDitherLayoutResetOK) {
       check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained', 'unrelated storage retained');
-      check(localStorage.getItem('pi-desktop:motion:v1') === 'paused', 'motion setting retained');
       check(!sessionStorage.getItem('pi-desktop:delegated-closed:v1:fixture') && $('[data-window-id="models"]').hidden, 'old observer dismissal and visibility cleared');
     }
     check($('#usage-diagram').dataset.agentId === 'main' && $('#clock').textContent.length > 0, 'usage and clock widgets');
@@ -59,12 +58,6 @@ async function piDitherSmoke(stage) {
     draft.querySelector('[aria-label="Close subagent window"]').click();
     check(!document.querySelector('[data-subagent-index]'), 'draft close releases its window');
     $('#help').click(); check($('#help-dialog').open, 'help dialog');
-    const motion = $('#background-motion');
-    if (!motion.disabled) {
-      const paused = motion.getAttribute('aria-pressed') === 'true';
-      motion.click(); await wait(() => $('#backdrop').dataset.running === String(paused));
-      motion.click(); await wait(() => $('#backdrop').dataset.running === String(!paused));
-    }
     $('#help-dialog').close();
     main.querySelector('.titlebar').focus();
     check(saved().main.sizeMode === 'auto', 'selection retains automatic sizing');
@@ -110,7 +103,7 @@ async function piDitherSmoke(stage) {
     check(saved().main.sizeMode === 'manual' && Math.abs(width() - facts.manual) < 2, 'native Reload keeps manual layout after one-shot reset');
     if (facts.reset) {
       check(window.piDitherLayoutResetOK === undefined, 'layout reset script removed before Reload');
-      check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained' && localStorage.getItem('pi-desktop:motion:v1') === 'paused', 'unrelated preferences survive reset and Reload');
+      check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained', 'unrelated preferences survive reset and Reload');
     }
     check(document.querySelectorAll('[data-subagent-index]').length === 0 && $('[data-window-id="models"]').hidden, 'native Reload creates no drafts or unhidden utilities');
     check(!location.hash && !location.search, 'reload removes auth fragment and nonsecret nonce');

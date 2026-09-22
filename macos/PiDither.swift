@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
         let config = WKWebViewConfiguration()
-        // Fixed local origin + normal store keep layout/motion preferences. Test
+        // Fixed local origin + normal store keep layout preferences. Test
         // instances use an ephemeral web store as well as an isolated Pi profile.
         if smoke {
             config.websiteDataStore = .nonPersistent()
@@ -249,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         completionHandler(alert.runModal() == .alertSecondButtonReturn ? field.stringValue : nil)
     }
     // Explicit one-shot maintenance only. Never clear a whole website store:
-    // credentials, sessions, workspace and motion settings are not layout data.
+    // credentials, sessions and workspace settings are not layout data.
     func prepareLayoutReset(port: Int) {
         var sources: [String] = []
         if smoke {
@@ -257,7 +257,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             // fixture store, proving a selective reset rather than an empty one.
             sources.append("""
             localStorage.setItem('pi-desktop:layout:v1', JSON.stringify({main:{x:0,y:0,w:650,h:440,sizeMode:'manual',zoomed:true},models:{x:0,y:0,w:500,h:450,hidden:false,sizeMode:'manual',zoomed:true}}));
-            localStorage.setItem('pi-desktop:motion:v1','paused');
             localStorage.setItem('pi-dither:smoke-keep','retained');
             sessionStorage.setItem('pi-desktop:delegated-closed:v1:fixture','["old"]');
             sessionStorage.setItem('pi-dither:smoke-keep','retained');
@@ -354,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.window.setContentSize(size)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.runSmokeStage(name) }
             } else {
-                print("PASS: native feature checks — eight utilities, minimum-width/medium-height opening, native resize, manual layouts, maximize, draft controls, menus, motion, hide/reopen, Reload and unchanged conversation.")
+                print("PASS: native feature checks — eight utilities, minimum-width/medium-height opening, native resize, manual layouts, maximize, draft controls, menus, plain background, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

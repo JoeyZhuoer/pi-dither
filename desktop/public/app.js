@@ -1,5 +1,4 @@
 import { DesktopWindows, nextSubagentIndex, subagentIndexFromName } from './windows.js';
-import { startBackdrop } from './backdrop.js';
 import { installDelegatedObservers, aggregateActivity, delegationNotice, delegationRows } from './delegated.js';
 import { renderMarkdown } from './markdown.js';
 import { installFeatureWindows, installUsageDiagram } from './features.js';
@@ -13,7 +12,7 @@ for (const id of ['windows', 'draft-scout', 'draft-review']) delete windows.save
 let observerStorage;
 try { observerStorage = sessionStorage; } catch { /* Storage is optional. */ }
 const observers = installDelegatedObservers({ windows, storage: observerStorage });
-let background, applyingSnapshot = false;
+let applyingSnapshot = false;
 const panels = new Map();
 const states = new Map();
 const drafts = new Map();
@@ -261,8 +260,9 @@ function updateUsageDiagram() {
 function updateFleet() {
   if (applyingSnapshot) return;
   const activity = aggregateActivity(states.values(), connected);
-  background?.setActivity?.(activity);
-  $('#backdrop').dataset.activity = activity;
+  // The aggregated fleet activity stays available to the UI and tests, but it no
+  // longer paints anything: the background is a plain dusty-pink ground.
+  $('#desktop').dataset.activity = activity;
   observers.reconcile(states.get('main'), contextId, connected);
   features?.update(featureState());
   updateUsageDiagram();
@@ -418,19 +418,4 @@ function clock() {
   $('#clock').textContent = now.toLocaleTimeString('en-GB'); $('#clock').dateTime = now.toISOString();
 }
 clock(); setInterval(clock, 1000);
-let motionPaused = false;
-try { motionPaused = localStorage.getItem('pi-desktop:motion:v1') === 'paused'; } catch { /* Storage is optional. */ }
-const motionButton = $('#background-motion');
-background = startBackdrop($('#backdrop'), { paused: motionPaused, onStateChange(state) {
-  motionPaused = state.paused;
-  $('#backdrop').dataset.running = String(state.running);
-  if (!motionButton) return;
-  motionButton.disabled = state.reducedMotion;
-  motionButton.textContent = state.reducedMotion ? 'Motion off (system preference)' : state.paused ? 'Resume background motion' : 'Pause background motion';
-  motionButton.setAttribute('aria-pressed', String(state.paused || state.reducedMotion));
-} });
-motionButton?.addEventListener('click', () => {
-  background.setPaused(!motionPaused);
-  try { localStorage.setItem('pi-desktop:motion:v1', motionPaused ? 'paused' : 'running'); } catch { /* Storage is optional. */ }
-});
 eventStream();

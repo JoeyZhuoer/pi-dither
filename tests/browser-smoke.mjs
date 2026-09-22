@@ -85,7 +85,7 @@ try {
       if (await evaluate(expression)) return;
       await new Promise((done) => setTimeout(done, 100));
     }
-    throw new Error(`Browser condition timed out: ${expression}`);
+    throw new Error(`Browser condition timed out: ${expression}${errors.length ? ` — page errors: ${errors.join(' | ')}` : ''}`);
   }
   const { targetId } = await rpc('Target.createTarget', { url: 'about:blank' }, false);
   ({ sessionId } = await rpc('Target.attachToTarget', { targetId, flatten: true }, false));
@@ -104,45 +104,21 @@ try {
   assert.equal(await evaluate('document.querySelectorAll(".utility-window[hidden]").length'), 8);
   assert.equal(await evaluate('document.querySelector("[data-window-id=windows], [data-feature=windows]")'), null, 'legacy Window Manager is not restored');
   assert.equal(await evaluate('document.querySelectorAll("[data-feature=tools]").length'), 1);
-  await until('document.querySelector("#backdrop").dataset.running === "true"');
-  await evaluate(`window.backdropHash = () => { const c=document.querySelector('#backdrop'), pixels=c.getContext('2d').getImageData(0,0,c.width,c.height).data; let hash=2166136261; for(let i=3;i<pixels.length;i+=4) hash=Math.imul(hash^pixels[i],16777619); return hash; }; window.initialPattern=backdropHash();`);
-  await until('backdropHash() !== initialPattern');
-  assert.ok(await evaluate('document.querySelector("#backdrop").width * document.querySelector("#backdrop").height <= 100000'));
+  assert.equal(await evaluate('document.querySelector("#backdrop, #background-motion")'), null, 'no background pattern or motion control is rendered');
   if (app) {
-    // Synthetic busy states drive the flowing field; no provider or prompt.
+    // Synthetic busy states still update the aggregated fleet activity; no provider or prompt.
     const main = app.sessions.get('main');
     const setActivity = async (phase, mode, expected) => {
       main.state.phase = phase; main.state.activityMode = mode; main.emit('change');
-      await until(`document.querySelector("#backdrop").dataset.activity === ${JSON.stringify(expected)}`);
+      await until(`document.querySelector("#desktop").dataset.activity === ${JSON.stringify(expected)}`);
     };
-    const captureBackdrop = async (name) => {
-      const data = await evaluate('document.querySelector("#backdrop").toDataURL("image/png")');
-      await writeFile(resolve(`.local/backdrop-${name}.png`), Buffer.from(data.split(',')[1], 'base64'));
-    };
-    await captureBackdrop('idle');
+    await until('document.querySelector("#desktop").dataset.activity === "idle"');
     await setActivity('running', 'thinking', 'thinking');
-    await captureBackdrop('thinking');
     await setActivity('running', 'output', 'output');
-    await captureBackdrop('output');
-    const flowing = await evaluate('backdropHash()');
-    await until(`backdropHash() !== ${flowing}`);
     await setActivity('stopped', 'idle', 'idle');
-    await until(`document.querySelector("#backdrop").dataset.activity === "idle"`);
     main.state.phase = 'idle'; main.emit('change');
   }
-  await evaluate('document.querySelector("#help").click(); document.querySelector("#background-motion").click(); document.querySelector("#help-dialog").close()');
-  const pausedPattern = await evaluate('backdropHash()');
-  await evaluate('new Promise(resolve => setTimeout(resolve, 260))');
-  assert.equal(await evaluate('backdropHash()'), pausedPattern, 'manual pause freezes the pattern');
-  await evaluate('document.querySelector("#background-motion").click()');
-  await rpc('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-  await until('document.querySelector("#backdrop").dataset.running === "false"');
-  assert.equal(await evaluate('document.querySelector("#background-motion").disabled'), true);
-  const reducedPattern = await evaluate('backdropHash()');
-  await evaluate('new Promise(resolve => setTimeout(resolve, 260))');
-  assert.equal(await evaluate('backdropHash()'), reducedPattern, 'system reduced motion freezes the pattern');
-  await rpc('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
-  await until('document.querySelector("#backdrop").dataset.running === "true"');
+  await evaluate('document.querySelector("#help").click(); document.querySelector("#help-dialog").close()');
   assert.equal(await evaluate('document.querySelectorAll(".sub-window").length'), 0, 'no child shell exists before an explicit launch or delegation');
   assert.equal(await evaluate('document.querySelector(".life-widget")'), null, 'decorative glider replaced');
   assert.equal(await evaluate('document.querySelector("#usage-diagram").dataset.agentId'), 'main');
@@ -269,7 +245,6 @@ try {
   const featuresScreenshot = await rpc('Page.captureScreenshot', { format: 'png' });
   await writeFile(resolve(`.local/desktop-features-${app ? 'fixture' : 'live'}.png`), Buffer.from(featuresScreenshot.data, 'base64'));
   await evaluate(`document.querySelector('.main-window button[aria-label="Minimize window"]').click()`);
-  await evaluate('document.querySelector("#background-motion").click()');
   const savedLayouts = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1"))');
   await rpc('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await until('innerWidth === 390');
@@ -281,7 +256,6 @@ try {
   await rpc('Page.reload');
   await until('document.querySelector(".main-window .send")?.disabled === false');
   assert.equal(await evaluate('document.querySelector(".main-window").hidden'), true, 'hidden main stays hidden across reload');
-  assert.equal(await evaluate('document.querySelector("#backdrop").dataset.running'), 'false', 'manual motion pause survives reload');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-subagent-index]"), node => Number(node.dataset.subagentIndex)).sort()'), [], 'reload does not manufacture starter drafts');
   const restoredLayouts = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1"))');
   for (const [id, layout] of Object.entries(savedLayouts)) assert.deepEqual(restoredLayouts[id], layout, `${id} layout survives reload`);
@@ -293,7 +267,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, water-surface backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, plain background and fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

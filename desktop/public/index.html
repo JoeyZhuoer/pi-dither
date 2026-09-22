@@ -14,7 +14,6 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <canvas id="backdrop" aria-hidden="true"></canvas>
   <header class="desktop-menu">
     <a class="wordmark" href="#" aria-label="Pi Dither">PI.DITHER</a>
     <span class="menu-caption">A SMALL OPERATING SPACE FOR BIG IDEAS.</span>
@@ -60,13 +59,12 @@
       <p>The main agent defaults to Pi's filesystem and shell tools. This local interface is not a sandbox. Model requests use your configured Pi provider. Authentication stays on the server.</p>
       <p>Use <strong>Windows</strong> for models, providers, workspace, Git/worktrees, usage, saved desktop sessions, activity, and per-agent tools. Closing a feature window hides it. Minimizing an agent never stops its work.</p>
       <p>Provider key overrides last only for this server lifetime. Archive hides a saved session without deleting it. Workspace/session/provider changes require idle agents.</p>
-      <p>This release does not attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom providers, session-tree editing, images and arbitrary extensions remain terminal features.</p>
-      <p>The main agent loads the installed pi-subagents extension. Its delegated agents follow their configured permissions. Automatic DELEGATED observer windows appear on the right in the former Scout/Review positions and show their available live output and results without launching extra agents. Closing an observer only dismisses the view; use the extension to stop its task. Minimize keeps it in the taskbar. Tools shows extension availability; restart the server after updating it.</p>
+      <p>This release does not attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom providers, session-tree editing and images remain terminal features. Installed Pi packages load for the main agent; project-local <code>.pi</code> resources stay untrusted.</p>
+      <p>The main agent loads every package configured in your Pi profile, so installed tools (for example web search) and pi-subagents load normally; a bundled pi-subagents fallback is used when the profile does not configure one. Its delegated agents follow their configured permissions. Automatic DELEGATED observer windows appear on the right in the former Scout/Review positions and show their available live output and results without launching extra agents. Closing an observer only dismisses the view; use the extension to stop its task. Minimize keeps it in the taskbar. Tools shows loaded packages and load errors; restart the app after installing one.</p>
       <p>Expand <strong>Inspection</strong> in a subagent window for its available assigned/delivered prompt, tool-call previews, attributed file-change evidence, tokens, cost and elapsed wall time. Unknown is not zero. Live counters stay provisional until final usage is reported; some upstream prompts and async metrics are unavailable. Shared workspace Git changes are not attributed to a child.</p>
       <p>Dropdown controls and their menus use the same retro style. Arrows/Home/End navigate, Enter/Space selects, Escape or Tab cancels tentative changes, and typing searches options. The native select remains the form's source of truth.</p>
-      <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; manual desktop subagents can only select from their read-only catalog.</p>
-      <p>Window types have distinct size presets; your manual layout wins. The background stays as it always was while stopped. While an agent is busy a simulated water surface rains ripples that interfere with each other and bounce off the window edges; when generation stops nothing new falls and the ripples slowly settle. Reduced motion, hidden tabs and manual pause always take priority.</p>
-      <button id="background-motion" type="button" aria-pressed="false">Pause background motion</button>
+      <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; main can use every tool from the packages installed in your Pi profile, while manual desktop subagents can only select from their read-only catalog.</p>
+      <p>Window types have distinct size presets; your manual layout wins. The desktop is a plain dusty-pink ground—no background pattern is drawn.</p>
       <form method="dialog"><button class="primary">Understood</button></form>
     </div>
   </dialog>
