@@ -8,7 +8,10 @@ export const DEFAULT_GROUND = '#e58da5';
 export const INK = '#20201f';
 export const MAX_PHOTO_CHARS = 900_000;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-const MAX_CELLS = 100_000, MAX_EDGE = 2048, CELL = 3;
+// One cell per CSS pixel keeps the dither dots small and the photo precise; the
+// budget still bounds very large windows. Painting is a single static buffer.
+const CELL = 1;
+export const MAX_CELLS = 4_000_000, MAX_EDGE = 4096;
 
 export function normalizeGround(value) {
   const text = String(value ?? '').trim().toLowerCase();
@@ -17,7 +20,7 @@ export function normalizeGround(value) {
   return short ? `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}` : null;
 }
 
-// Bitmap size independent of devicePixelRatio, bounded like the old backdrop.
+// Bitmap size: one cell per CSS pixel (dot size ~1px), bounded for huge windows.
 export function backgroundSize(viewportWidth, viewportHeight) {
   const cols = Math.ceil(Math.max(1, Number(viewportWidth) || 1) / CELL);
   const rows = Math.ceil(Math.max(1, Number(viewportHeight) || 1) / CELL);
@@ -39,17 +42,28 @@ export function ditherPhoto(pixels, width, height) {
   return ink;
 }
 
-// Ground fill plus optional ink cells at bitmap resolution; CSS scales it up.
+const rgb = (hex) => {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(String(hex || '').toLowerCase());
+  return match ? [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)] : [0, 0, 0];
+};
+
+// Ground fill plus optional ink pixels written as one ImageData buffer, so the
+// dither stays pixel-precise at full resolution instead of blocky rectangles.
 export function paintBackground(canvas, { ground, width, height, ink }) {
   const ctx = canvas?.getContext?.('2d');
-  if (!ctx) return false;
+  if (!ctx || typeof ctx.createImageData !== 'function' || typeof ctx.putImageData !== 'function') return false;
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
-  ctx.fillStyle = ground;
-  ctx.fillRect(0, 0, width, height);
-  if (!ink) return true;
-  ctx.fillStyle = INK;
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (ink[y * width + x]) ctx.fillRect(x, y, 1, 1);
+  const [groundRed, groundGreen, groundBlue] = rgb(ground), [inkRed, inkGreen, inkBlue] = rgb(INK);
+  const image = ctx.createImageData(width, height), data = image.data;
+  for (let index = 0, at = 0; index < width * height; index++, at += 4) {
+    const useInk = ink && ink[index];
+    data[at] = useInk ? inkRed : groundRed;
+    data[at + 1] = useInk ? inkGreen : groundGreen;
+    data[at + 2] = useInk ? inkBlue : groundBlue;
+    data[at + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
   return true;
 }
 

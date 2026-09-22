@@ -178,7 +178,8 @@ test('feature menu replaces manager with Tools and Help documents the plain back
   assert.match(html, /data-feature="background">Background/);
   assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
-  assert.match(html, /plain dusty-pink ground/);
+  assert.match(html, /id="background"/);
+  assert.match(html, /dithered photo in <strong>Windows \u2192 Background<\/strong>/);
 });
 
 test('Tools drafts, authoritative Apply, guards, empty catalogs and stale responses (no provider)', async (t) => {

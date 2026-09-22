@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  DEFAULT_GROUND, GROUND_KEY, INK, MAX_PHOTO_CHARS, PHOTO_KEY,
+  DEFAULT_GROUND, GROUND_KEY, MAX_CELLS, MAX_EDGE, MAX_PHOTO_CHARS, PHOTO_KEY,
   backgroundSize, ditherPhoto, normalizeGround, paintBackground, readBackground, removePhoto, writeGround, writePhoto,
 } from '../desktop/public/background.js';
 
@@ -22,10 +22,14 @@ function rgba(width, height, [r, g, b, a = 255]) {
 }
 
 function frame() {
-  const fills = [];
-  const ctx = { fillStyle: '', fillRect(x, y, w, h) { fills.push({ style: ctx.fillStyle, x, y, w, h }); } };
-  return { canvas: { width: 0, height: 0, getContext: () => ctx }, fills };
+  const paints = [];
+  const ctx = {
+    createImageData(width, height) { return { width, height, data: new Uint8ClampedArray(width * height * 4) }; },
+    putImageData(image) { paints.push(image); },
+  };
+  return { canvas: { width: 0, height: 0, getContext: () => ctx }, paints };
 }
+const pixel = (image, x, y) => Array.from(image.data.slice((y * image.width + x) * 4, (y * image.width + x) * 4 + 4));
 
 test('ground colours are normalized and invalid input falls back to the default', () => {
   assert.equal(normalizeGround('#AABBCC'), '#aabbcc');
@@ -52,11 +56,13 @@ test('stored background settings are validated and optional storage never throws
   assert.doesNotThrow(() => removePhoto(denied));
 });
 
-test('bitmap size is bounded independently of the viewport', () => {
-  assert.deepEqual(backgroundSize(480, 300), { width: 160, height: 100 });
+test('bitmap size is pixel-precise for normal windows and bounded for huge ones', () => {
+  assert.deepEqual(backgroundSize(480, 300), { width: 480, height: 300 }, 'one cell per CSS pixel');
+  assert.deepEqual(backgroundSize(1440, 940), { width: 1440, height: 940 }, 'typical app window stays 1:1');
+  assert.deepEqual(backgroundSize(1920, 1080), { width: 1920, height: 1080 }, 'full HD stays 1:1');
   for (const [width, height] of [[1e9, 1e9], [1e9, 1], [0, NaN], [-5, -5]]) {
     const size = backgroundSize(width, height);
-    assert.ok(size.width >= 1 && size.height >= 1 && size.width * size.height <= 100_000 && size.width <= 2048 && size.height <= 2048);
+    assert.ok(size.width >= 1 && size.height >= 1 && size.width * size.height <= MAX_CELLS && size.width <= MAX_EDGE && size.height <= MAX_EDGE);
   }
 });
 
@@ -70,17 +76,22 @@ test('photo dithering is deterministic ordered dithering in the ink', () => {
   assert.notDeepEqual([...ditherPhoto(rgba(8, 8, [128, 0, 0]), 8, 8)], [...mid], 'luminance weighting matters');
 });
 
-test('painting fills the ground first and then the dither cells', () => {
-  const { canvas, fills } = frame();
+test('painting writes one precise pixel buffer with ground and ink colours', () => {
+  const { canvas, paints } = frame();
   paintBackground(canvas, { ground: '#112233', width: 4, height: 2, ink: Uint8Array.from([1, 0, 1, 0, 0, 1, 0, 1]) });
   assert.equal(canvas.width, 4); assert.equal(canvas.height, 2);
-  assert.deepEqual(fills[0], { style: '#112233', x: 0, y: 0, w: 4, h: 2 });
-  const ink = fills.slice(1);
-  assert.equal(ink.length, 4);
-  assert.ok(ink.every((fill) => fill.style === INK && fill.w === 1 && fill.h === 1));
-  assert.deepEqual(ink.map((fill) => `${fill.x},${fill.y}`), ['0,0', '2,0', '1,1', '3,1']);
+  assert.equal(paints.length, 1, 'a single ImageData paint');
+  const image = paints[0];
+  assert.deepEqual(pixel(image, 0, 0), [32, 32, 31, 255], 'ink pixel');
+  assert.deepEqual(pixel(image, 1, 0), [17, 34, 51, 255], 'ground pixel');
+  assert.deepEqual(pixel(image, 2, 0), [32, 32, 31, 255]);
+  assert.deepEqual(pixel(image, 1, 1), [32, 32, 31, 255]);
+  assert.deepEqual(pixel(image, 3, 1), [32, 32, 31, 255]);
+  assert.deepEqual(pixel(image, 0, 1), [17, 34, 51, 255]);
   const plain = frame();
   paintBackground(plain.canvas, { ground: '#445566', width: 3, height: 3 });
-  assert.equal(plain.fills.length, 1);
+  assert.equal(plain.paints.length, 1);
+  assert.deepEqual(pixel(plain.paints[0], 2, 2), [68, 85, 102, 255], 'flat ground');
   assert.equal(paintBackground(null, { ground: '#000000', width: 1, height: 1 }), false);
+  assert.equal(paintBackground({ width: 0, height: 0, getContext: () => ({}) }, { ground: '#000000', width: 1, height: 1 }), false);
 });
