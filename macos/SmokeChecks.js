@@ -20,7 +20,7 @@ async function piDitherSmoke(stage) {
     check(a.extensionStatus.status === 'loaded' && a.activeTools.includes('subagent') && a.activeTools.includes('subagent_supervisor'), 'bundled extension tools');
     check(!location.hash && document.querySelectorAll('[data-subagent-index]').length === 0, 'no startup drafts or visible auth fragment');
     check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');
-    check(saved().main.sizeMode === 'auto' && width() > 650, 'main fits automatically before interaction');
+    check(saved().main.sizeMode === 'auto' && width() === 610, 'main opens at the minimum width');
     check($('#backdrop').dataset.activity === 'idle', 'background reports idle activity while the model is stopped');
     check($('#backdrop').dataset.running === String($('#background-motion').getAttribute('aria-pressed') !== 'true'), 'animation follows the motion preference');
     if (window.piDitherLayoutResetOK) {
@@ -48,7 +48,7 @@ async function piDitherSmoke(stage) {
       $(`[data-feature="${id}"]`).click(); check(win.style.width === before, id + ' stable re-open');
       win.querySelector('[aria-label="Close utility window"]').click();
     }
-    check(sizes.size >= 4, 'native utility sizes differ by purpose');
+    check(sizes.size === 1 && [...sizes][0].startsWith('400px/'), 'utilities open at the minimum width with a medium height');
     check($('[data-testid="providers-key"]').type === 'password' && !$('[data-testid="providers-key"]').value, 'empty credential control');
     check($('[data-testid="tools-tool-subagent"]')?.checked, 'extension selection reflected');
     $('#add-agent').click();
@@ -74,20 +74,23 @@ async function piDitherSmoke(stage) {
     main.querySelector('[aria-label="Minimize window"]').click(); check(main.hidden, 'main minimize');
     [...document.querySelectorAll('#tasks button')].find(button => button.textContent === 'Main Agent / Pi').click();
     check(!main.hidden && main.style.width === beforeHide, 'taskbar restores main');
-    window.nativeFeatureState = { reset: window.piDitherLayoutResetOK === true, session: a.sessionId, tools: JSON.stringify(a.activeTools), wide: width(), utility: parseFloat($('[data-window-id="models"]').style.width) };
+    window.nativeFeatureState = { reset: window.piDitherLayoutResetOK === true, session: a.sessionId, tools: JSON.stringify(a.activeTools), wide: width(), tall: parseFloat(main.style.height), utility: parseFloat($('[data-window-id="models"]').style.height) };
   } else if (stage === 'minimum') {
     await wait(() => innerWidth <= 800);
     const rect = main.getBoundingClientRect(), area = $('#desktop').getBoundingClientRect();
     check(rect.right <= area.right + 1 && rect.bottom <= area.bottom + 1, 'minimum native viewport keeps main inside desktop');
     check($('.desktop-menu').scrollWidth <= $('.desktop-menu').clientWidth, 'minimum native toolbar fits');
     check(main.querySelector('.send').getBoundingClientRect().bottom <= rect.bottom + 1, 'minimum native composer remains reachable');
+    check(parseFloat($('[data-window-id="models"]').style.height) === 320, 'hidden utility clamps to its minimum height at the smallest viewport');
   } else if (stage === 'narrow') {
-    await wait(() => width() < nativeFeatureState.wide - 50);
-    check(saved().main.sizeMode === 'auto', 'native narrow resize retains auto intent');
+    // The smallest viewport clamps every window to its minimum height, so the
+    // next size up must grow the hidden utility again without changing width.
+    await wait(() => parseFloat($('[data-window-id="models"]').style.height) > 320);
+    check(saved().main.sizeMode === 'auto' && width() === nativeFeatureState.wide, 'native narrow resize retains minimum width and auto intent');
     check($('[data-window-id="models"]').hidden, 'native resize does not reopen hidden windows');
   } else if (stage === 'wide') {
-    await wait(() => Math.abs(width() - nativeFeatureState.wide) < 2);
-    check(Math.abs(parseFloat($('[data-window-id="models"]').style.width) - nativeFeatureState.utility) < 2, 'hidden utility recovers working size');
+    await wait(() => Math.abs(parseFloat($('[data-window-id="models"]').style.height) - nativeFeatureState.utility) < 2);
+    check(Math.abs(parseFloat($('[data-window-id="models"]').style.height) - nativeFeatureState.utility) < 2, 'hidden utility recovers medium height');
     const maximize = main.querySelector('[aria-label="Maximize or restore main window"]');
     maximize.click(); maximize.click(); check(saved().main.sizeMode === 'auto', 'maximize/restore retains auto intent');
     main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));

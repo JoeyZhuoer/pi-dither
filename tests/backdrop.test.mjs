@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
-import { drawBackdrop, startBackdrop } from '../desktop/public/backdrop.js';
+import { drawBackdrop, flowOffset, startBackdrop } from '../desktop/public/backdrop.js';
 
 class Events {
   listeners = new Map();
@@ -329,30 +329,35 @@ test('idle pixels exactly match the original animation', () => {
   }
 });
 
-// Exact cell membership, including the sparse sub-pixel lattice dots.
-function inked(frame, x, y) {
-  for (const cell of frame.cells) if (cell.startsWith(`${x},${y},`)) return true;
-  return false;
+// Ink margins along one axis: a coarse profile for measuring how far the
+// flowing field drifted between two frames. Positive means the pattern moved
+// toward smaller coordinates along that axis.
+function axisProfile(frame, axis) {
+  const counts = new Map();
+  for (const cell of frame.cells) {
+    const value = Number(cell.split(',')[axis]);
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return { counts, length: axis === 0 ? frame.width : frame.height };
+}
+function bestTravel(before, after, axis, limit = 8) {
+  const a = axisProfile(before, axis), b = axisProfile(after, axis);
+  let best = 0, bestScore = Infinity;
+  for (let shift = -limit; shift <= limit; shift++) {
+    let score = 0;
+    for (let index = 0; index < a.length; index++) {
+      const next = b.counts.get(index), previous = a.counts.get(index + shift);
+      if (next || previous) score += Math.abs((next ?? 0) - (previous ?? 0));
+    }
+    if (score < bestScore) { bestScore = score; best = shift; }
+  }
+  return best;
 }
 function changedCells(before, after) {
   let changed = 0;
   for (const cell of before.cells) if (!after.cells.has(cell)) changed++;
   for (const cell of after.cells) if (!before.cells.has(cell)) changed++;
   return changed;
-}
-// Whole-cell translations must reproduce the previous frame exactly: busy
-// fields are rigid, so their motion is a true translation, not just flicker.
-function assertTranslated(before, after, dx, dy, label) {
-  let compared = 0, inkedCount = 0;
-  for (let x = 0; x < before.width; x++) for (let y = 0; y < before.height; y++) {
-    const sourceX = x + dx, sourceY = y + dy;
-    if (sourceX < 0 || sourceY < 0 || sourceX >= before.width || sourceY >= before.height) continue;
-    compared++;
-    if (inked(before, sourceX, sourceY)) inkedCount++;
-    assert.equal(inked(after, x, y), inked(before, sourceX, sourceY), `${label} pixel ${x},${y} is translated exactly`);
-  }
-  assert.ok(inkedCount > 200, `${label} translated region carries ink`);
-  assert.ok(compared > before.width * before.height * .5, `${label} translation covers most of the window`);
 }
 
 test('activity patterns are deterministic and spatially distinct in the same palette', () => {
@@ -374,25 +379,50 @@ test('activity patterns are deterministic and spatially distinct in the same pal
   }
 });
 
-test('idle vibrates in place while busy fields flow as one exact translation', () => {
+test('idle shimmers in place while busy fields drift smoothly with small per-frame changes', () => {
   const f = fixture();
   const frameAt = (time, mode) => { drawBackdrop(f.canvas, time, mode); return f.frames.at(-1); };
-  // The stopped field keeps its original slow shimmer: tiny per-frame change.
-  const idleBefore = frameAt(40, 'idle');
-  const accumulate = (mode) => { let changed = 0; for (let i = 0; i < 6; i++) changed += changedCells(frameAt(7 + i / 12, mode), frameAt(7 + (i + 1) / 12, mode)); return changed; };
-  const idleMoved = accumulate('idle');
-  assert.ok(idleMoved / (idleBefore.width * idleBefore.height * 6) < .02, 'idle only shimmers in place');
-  // Busy fields sweep the whole dither, not just a few flickering pixels.
-  for (const mode of ['thinking', 'output']) assert.ok(accumulate(mode) > idleMoved * 4, `${mode} visibly moves the whole field`);
-  // Fixture bitmap is 160x100, so amplitudes round to whole cells. Whole-cell
-  // offsets must reproduce the previous frame exactly at any pair of times.
-  assertTranslated(frameAt(0, 'output'), frameAt(1.5, 'output'), 0, 13, 'output rise');
-  assertTranslated(frameAt(0, 'output'), frameAt(4.5, 'output'), 0, -13, 'output return');
-  assertTranslated(frameAt(0, 'thinking'), frameAt(1.75, 'thinking'), 10, 10, 'thinking wander');
-  assertTranslated(frameAt(0, 'thinking'), frameAt(5.25, 'thinking'), -10, -8, 'thinking return');
-  // The path stays bounded and on canvas.
-  assert.ok(frameAt(4.5, 'output').cells.size > 200, 'output field stays on canvas');
-  assert.ok(frameAt(5.25, 'thinking').cells.size > 200, 'thinking field stays on canvas');
+  const changedFraction = (before, after) => changedCells(before, after) / (before.width * before.height);
+  // The stopped field keeps its original slow shimmer and never drifts.
+  const idleMoved = changedFraction(frameAt(40, 'idle'), frameAt(40 + 1 / 12, 'idle'));
+  assert.ok(idleMoved < .02, 'idle only shimmers in place');
+  assert.equal(bestTravel(frameAt(0, 'idle'), frameAt(3, 'idle'), 1), 0, 'idle does not drift');
+  // Busy fields flow gently: each frame changes only a small part of the
+  // dither, clearly more than idle, but nothing like a whole-band jump.
+  for (const mode of ['thinking', 'output']) {
+    const moved = changedFraction(frameAt(7, mode), frameAt(7 + 1 / 12, mode));
+    assert.ok(moved > idleMoved * 3 && moved < .05, `${mode} flows with small per-frame changes (${(moved * 100).toFixed(1)}%)`);
+    for (const axis of [0, 1]) assert.ok(Math.abs(bestTravel(frameAt(7, mode), frameAt(7 + 1 / 12, mode), axis)) <= 1, `${mode} never jumps in one frame`);
+    // A whole-cell crossing must not re-dither the field.
+    let largest = 0;
+    for (let step = 0; step < 24; step++) largest = Math.max(largest, changedFraction(frameAt(step / 12, mode), frameAt((step + 1) / 12, mode)));
+    assert.ok(largest < .05, `${mode} has no re-dither pop (largest ${(largest * 100).toFixed(1)}%)`);
+  }
+  // Over several seconds the drift path keeps moving: output rises, thinking
+  // wanders on both axes, and both stay inside a bounded canvas-relative path.
+  const drift = (mode, time) => flowOffset(mode, time, f.canvas.width, f.canvas.height);
+  const rise = drift('output', 3).y - drift('output', 0).y;
+  assert.ok(rise >= 2, `output drifts upward (${rise.toFixed(2)} cells over 3s)`);
+  const wander = drift('thinking', 0), later = drift('thinking', 1.5);
+  assert.ok(Math.hypot(later.x - wander.x, later.y - wander.y) >= 1, 'thinking drifts sideways');
+  assert.equal(drift('idle', 5), null, 'idle has no drift offset');
+  for (const mode of ['thinking', 'output']) {
+    let largest = 0, reach = 0;
+    for (let step = 0; step <= 2400; step++) {
+      const current = drift(mode, step / 12);
+      const previous = drift(mode, (step - 1) / 12);
+      if (step) largest = Math.max(largest, Math.hypot(current.x - previous.x, current.y - previous.y));
+      reach = Math.max(reach, Math.hypot(current.x, current.y));
+    }
+    assert.ok(largest <= .3, `${mode} moves a little each frame (${largest.toFixed(2)} cells)`);
+    assert.ok(reach <= Math.max(f.canvas.width, f.canvas.height) * .55, `${mode} drift stays bounded (${reach.toFixed(1)} cells)`);
+  }
+  // The drift path is bounded, so the pattern always stays on canvas.
+  const area = f.canvas.width * f.canvas.height;
+  for (const time of [0, 40, 90, 180, 400]) for (const mode of ['thinking', 'output']) {
+    const frame = frameAt(time, mode);
+    assert.ok(frame.cells.size > 200 && frame.cells.size < area, `${mode} stays on canvas at ${time}s`);
+  }
 });
 
 test('activity transitions coalesce, normalize invalid modes and never schedule extra work', () => {

@@ -155,14 +155,16 @@ try {
   for (const type of ['mousePressed', 'mouseReleased']) await rpc('Input.dispatchMouseEvent', { type, x: chartHeading.x, y: chartHeading.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
   await until('document.querySelector("[data-window-id=usage]").hidden === false');
   await evaluate(`document.querySelector('[data-window-id=usage] button[aria-label="Close utility window"]').click()`);
-  // The initial main fits without any sizing control, and follows the viewport.
+  // The initial main opens at the minimum width and a medium height, without
+  // any sizing control, and follows the viewport height.
   assert.equal(await evaluate('document.querySelector("#auto-size, [aria-label=\\"Zoom to working size\\"]")'), null);
-  const autoWidth = await evaluate('document.querySelector(".main-window").offsetWidth');
+  const autoHeight = await evaluate('document.querySelector(".main-window").offsetHeight');
+  assert.equal(await evaluate('document.querySelector(".main-window").offsetWidth'), 610, 'main opens at the minimum width');
   assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1")).main.sizeMode'), 'auto');
   await rpc('Emulation.setDeviceMetricsOverride', { width: 980, height: 740, deviceScaleFactor: 1, mobile: false });
-  await until(`document.querySelector('.main-window').offsetWidth < ${autoWidth}`);
+  await until(`document.querySelector('.main-window').offsetHeight < ${autoHeight}`);
   await rpc('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
-  await until(`document.querySelector('.main-window').offsetWidth === ${autoWidth}`);
+  await until(`document.querySelector('.main-window').offsetHeight === ${autoHeight}`);
   const original = await evaluate('({x:document.querySelector(".main-window").offsetLeft,y:document.querySelector(".main-window").offsetTop})');
   const title = await evaluate('(()=>{const r=document.querySelector(".main-window .titlebar").getBoundingClientRect();return {x:r.x+100,y:r.y+10}})()');
   for (const [type, x, y] of [['mousePressed', title.x, title.y], ['mouseMoved', title.x + 30, title.y + 20], ['mouseReleased', title.x + 30, title.y + 20]]) {
@@ -200,7 +202,7 @@ try {
     assert.equal(app.sessions.size, 1, 'unavailable metadata cannot silently widen a custom draft selection');
     main.state.availableTools = catalog; main.emit('change');
     await until(`!document.querySelector('[data-subagent-index="1"] .draft-footer button').disabled`);
-    const draftGeometry = await evaluate(`(() => { const draft=document.querySelector('[data-subagent-index="1"]'); draft.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true})); return ['left','top','width','height'].map(key=>draft.style[key]); })()`);
+    const draftGeometry = await evaluate(`(() => { const draft=document.querySelector('[data-subagent-index="1"]'); draft.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})); return ['left','top','width','height'].map(key=>draft.style[key]); })()`);
     await evaluate(`document.querySelector('[data-subagent-index="1"] .draft-body').requestSubmit()`);
     await until('document.querySelectorAll(".child-transfer").length === 1 && document.querySelector(".sub-window .message.assistant") !== null');
     assert.equal(app.sessions.size, 2, 'only explicitly launched child is created');
@@ -219,18 +221,20 @@ try {
     assert.ok((await evaluate('document.querySelector(".main-window textarea").value')).includes('Read-only finding'));
     assert.equal(app.sessions.get('main').calls.length, 0, 'handoff only inserts a draft');
   }
-  const compactModels = await evaluate('document.querySelector("[data-window-id=models]").offsetWidth');
+  const compactModels = await evaluate('parseFloat(document.querySelector("[data-window-id=models]").style.width)');
+  assert.ok(compactModels > 400, 'compact models preset is roomier than the opening width');
   for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
     await evaluate(`document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="${id}"]').click()`);
     await until(`document.querySelector('[data-window-id="${id}"]').hidden === false`);
     await until(`document.querySelector('[data-testid="${id}-status"]').textContent !== 'Loading…'`);
     assert.equal(await evaluate(`document.querySelector('[data-testid="${id}-status"]').classList.contains('feature-error')`), false, `${id} loads through integrated API`);
-    if (id === 'models') assert.ok(await evaluate('document.querySelector("[data-window-id=models]").offsetWidth') > compactModels, 'new utility auto-enlarges');
+    if (id === 'models') assert.equal(await evaluate('parseFloat(document.querySelector("[data-window-id=models]").style.width)'), 400, 'utility opens at the minimum width');
     const layout = await evaluate(`(()=>{const e=document.querySelector('[data-window-id="${id}"]');return [e.style.left,e.style.top,e.style.width,e.style.height]})()`);
     await evaluate(`document.querySelector('[data-window-id="${id}"] button[aria-label="Close utility window"]').click(); document.querySelector('[data-feature="${id}"]').click()`);
     assert.deepEqual(await evaluate(`(()=>{const e=document.querySelector('[data-window-id="${id}"]');return [e.style.left,e.style.top,e.style.width,e.style.height]})()`), layout, `${id} reopens at the same size and location`);
   }
-  assert.ok(await evaluate('new Set(Array.from(document.querySelectorAll(".utility-window"), e => e.style.width + "/" + e.style.height)).size >= 4'), 'utility purposes have distinct working-size presets');
+  const utilitySizes = await evaluate('Array.from(document.querySelectorAll(".utility-window"), e => e.style.width + "/" + e.style.height)');
+  assert.ok(utilitySizes.every(size => size.startsWith('400px/')), 'every utility opens at the minimum width with a medium height: ' + JSON.stringify(utilitySizes));
   if (app) {
     assert.equal(await evaluate('document.querySelector("[data-testid=tools-tool-subagent]").checked'), true, 'extension tool is visible and initially active for main');
     assert.match(await evaluate('document.querySelector("[data-testid=tools-extension]").textContent'), /pi-subagents/);
@@ -289,7 +293,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, flowing busy backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, auto-zoom, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, flowing busy backdrop, ' : ''}Tools replacing Window Manager, activity/pausable/reduced-motion backdrop, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

@@ -53,7 +53,7 @@
     <div class="utility-title">Desktop / Field guide</div>
     <div class="help-body">
       <h2>Your main agent gets the big window.</h2>
-      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Windows automatically choose a suitable size when opened: main, children, delegated observers and each utility have different size profiles. They adapt when the native app or desktop area is resized; manual adjustments remain respected. No Auto-size button is needed. Hidden windows stay hidden. Arrange resets the layout.</p>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Windows open at the narrowest usable width with a medium height—main, children, observers and utilities have their own minimum widths—and they only get taller or shorter with the app when you have not resized them yourself. Any manual resize is saved for that window. Hidden windows stay hidden. Arrange resets the layout.</p>
       <p>The desktop usage chart follows the selected agent: input, output, cache, reported cost and context occupancy. Click its heading for details. Unknown usage is shown as —; provisional turn usage is not added to session totals.</p>
       <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
       <p><strong>No empty subagent windows are created at startup.</strong> Use + Subagent to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
@@ -65,7 +65,7 @@
       <p>Expand <strong>Inspection</strong> in a subagent window for its available assigned/delivered prompt, tool-call previews, attributed file-change evidence, tokens, cost and elapsed wall time. Unknown is not zero. Live counters stay provisional until final usage is reported; some upstream prompts and async metrics are unavailable. Shared workspace Git changes are not attributed to a child.</p>
       <p>Dropdown controls and their menus use the same retro style. Arrows/Home/End navigate, Enter/Space selects, Escape or Tab cancels tentative changes, and typing searches options. The native select remains the form's source of truth.</p>
       <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; manual desktop subagents can only select from their read-only catalog.</p>
-      <p>Window types have distinct size presets; your manual layout wins. The background vibrates gently while stopped and visibly flows—thinking circulates, output streams—while an agent is busy. Reduced motion, hidden tabs and manual pause always take priority.</p>
+      <p>Window types have distinct size presets; your manual layout wins. The background stays as it always was while stopped and glides gently—thinking drifts, output rises—while an agent is busy, changing only a little each frame. Reduced motion, hidden tabs and manual pause always take priority.</p>
       <button id="background-motion" type="button" aria-pressed="false">Pause background motion</button>
       <form method="dialog"><button class="primary">Understood</button></form>
     </div>

@@ -19,17 +19,35 @@ function contextFor(canvas) {
 // Unknown inputs safely return to the original idle field.
 const activityMode = value => value === 'thinking' || value === 'output' ? value : 'idle';
 
-// Busy modes ride a bounded, size-relative translation so the whole dithered
-// field visibly flows instead of only flickering: output streams up and down,
-// thinking wanders diagonally. A constant-speed triangle keeps the cadence
-// steady, and whole-cell offsets make every frame an exact translation of the
-// previous pattern rather than a re-dither flicker. Idle keeps its own
-// vibration and has no offset.
-const triangle = value => 2 / Math.PI * Math.asin(Math.sin(2 * Math.PI * value));
-function flowOffset(mode, time, width, height) {
-  if (mode === 'output') return { x: 0, y: Math.round(Math.round(height * .13) * triangle(time / 6)) };
-  if (mode === 'thinking') return { x: Math.round(Math.round(width * .06) * triangle(time / 7)), y: Math.round(Math.round(height * .11) * triangle(time / 6.5)) };
+// Busy modes drift the whole dithered field with fractional offsets so the
+// pattern glides smoothly, and sample the threshold in those same moving
+// coordinates: the whole bitmap then stays a true translation of itself, with
+// only a little changing each frame. Idle keeps its own vibration, its hard
+// Bayer lattice and no offset.
+const FLOW_CELLS_PER_SECOND = 1.6;
+// Exported for tests: deterministic, side-effect-free drift path.
+export function flowOffset(mode, time, width, height) {
+  if (mode === 'output') {
+    const lift = Math.max(1, height * .5);
+    return { x: 0, y: lift * Math.sin(time * FLOW_CELLS_PER_SECOND / lift) };
+  }
+  if (mode === 'thinking') {
+    const across = Math.max(1, width * .3), down = Math.max(1, height * .24);
+    const axis = FLOW_CELLS_PER_SECOND / Math.SQRT2;
+    return { x: across * Math.sin(time * axis / across), y: down * Math.sin(time * axis / down + 1.9) };
+  }
   return null;
+}
+// Bilinear interpolation of the 4x4 lattice: continuous in space, so moving
+// the sampled coordinates with the field translates the dither instead of
+// re-dithering it wholesale at each whole-cell crossing.
+function softThreshold(sx, sy) {
+  const fx = sx - Math.floor(sx), fy = sy - Math.floor(sy);
+  const x0 = ((Math.floor(sx) % 4) + 4) % 4, y0 = ((Math.floor(sy) % 4) + 4) % 4;
+  const x1 = (x0 + 1) % 4, y1 = (y0 + 1) % 4;
+  const top = BAYER[y0 * 4 + x0] + (BAYER[y0 * 4 + x1] - BAYER[y0 * 4 + x0]) * fx;
+  const bottom = BAYER[y1 * 4 + x0] + (BAYER[y1 * 4 + x1] - BAYER[y1 * 4 + x0]) * fx;
+  return (top + (bottom - top) * fy) / 16;
 }
 
 export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
@@ -67,9 +85,9 @@ export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
         : x * .41 + y * .27 + time * .24 + Math.sin(y * .073 + time * .09) * 9;
     const wave = .65 + .35 * Math.sin(phase);
     const density = Math.max(a, b, c) * wave * .88;
-    const threshold = BAYER[(((Math.floor(sy) % 4) + 4) % 4) * 4 + (((Math.floor(sx) % 4) + 4) % 4)] / 16;
+    const threshold = flow ? softThreshold(sx, sy) : BAYER[(y % 4) * 4 + x % 4] / 16;
     if (density > threshold + .06) ctx.fillRect(x, y, 1, 1);
-    else if (((Math.floor(sx) % 3) + 3) % 3 === 0 && ((Math.floor(sy) % 3) + 3) % 3 === 0) ctx.fillRect(x, y, .45, .45);
+    else if (x % 3 === 0 && y % 3 === 0) ctx.fillRect(x, y, .45, .45);
   }
 }
 

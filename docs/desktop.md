@@ -8,9 +8,9 @@ Based on the user-supplied retro desktop reference (`截屏2026-09-19 16.54.12.p
 
 The main agent has the largest agent window. Subagent windows are draggable, resizable within smaller bounds, minimizable, and closable. Window geometry and visibility stay in localStorage; transcripts and credentials do not. The clock is decorative. Startup does not create Scout/Review drafts. Manual drafts are created only through **+ Subagent**, and remain NOT STARTED until Launch. Subagent display numbers are reusable labels, separate from UUID/session identity: closing releases a number, minimizing does not, and surviving agents keep their numbers. The server resolves conflicting draft reservations from different tabs.
 
-The background vibrates gently while stopped, preserving the original idle field. When the model is thinking or producing output, the entire dithered field flows: thinking circulates it in a bounded orbit, output streams it up and down; the motion is a true translation of the whole pattern, so it is clearly visible rather than a subtle flicker. Output takes priority across connected manual agents and current-session extension children; tools/unknown busy work share the thinking flow without claiming verified model reasoning. Settled/disconnected records do not animate as active work. Activity changes do not override any pause setting.
+The background keeps its original idle field while stopped, shimmering gently in place. When the model is thinking or producing output, the whole dithered field glides slowly and continuously: thinking drifts diagonally, output rises, each frame changing only a small fraction of the dither. The drift is a coherent translation of the field, so it reads as flow rather than flicker or stepping, and its bounded canvas-relative path keeps the pattern on screen. Output takes priority across connected manual agents and current-session extension children; tools/unknown busy work share the thinking drift without claiming verified model reasoning. Settled/disconnected records do not animate as active work. Activity changes do not override any pause setting.
 
-The background animates at a capped ~12fps, with at most 100,000 drawing cells and a 2048px bitmap edge. Idle keeps its original slow shimmer; busy states translate the whole field along a bounded path whose amplitude scales with the canvas, so the cadence looks the same at any window size and the pattern never leaves the view. Hidden tabs/pagehide, system reduced-motion settings and manual pause stop its animation timer. Use **? → Pause background motion** to pause; the preference persists across reloads. Reduced motion takes priority.
+The background animates at a capped ~12fps, with at most 100,000 drawing cells and a 2048px bitmap edge. Idle keeps its original slow shimmer and hard lattice. Busy states drift the field at roughly 1.6 cells/second (about 1–2% of pixels changing per frame) along a bounded canvas-relative path; the threshold is sampled in the same moving coordinates so whole-cell crossings never re-dither the field. Hidden tabs/pagehide, system reduced-motion settings and manual pause stop its animation timer. Use **? → Pause background motion** to pause; the preference persists across reloads. Reduced motion takes priority.
 
 The usage diagram follows the last selected real agent window, retaining that selection while utility/draft windows are focused. It shows reported session input/output/cache tokens, total tokens, cost and context occupancy. Token bars share a scale relative to the largest category; cache combines read and write. Unknown values remain `—`, zero is shown as zero, and provisional active-turn tokens are separate rather than added again to session totals. Disconnects mark the last reported data as offline. Click the diagram heading for detailed Usage. It uses existing SSE snapshots, without polling, model prompts or estimated activity; on mobile it appears beneath the stacked windows.
 
@@ -35,24 +35,24 @@ Use the authenticated URL printed in Terminal. It binds to `127.0.0.1`, not all 
 
 Use **Windows ▾** or the taskbar to show a feature. Utility close/minimize hides it without discarding its inputs. The separate Window Manager utility has been removed. Title-bar controls, the taskbar and Arrange still manage windows. Hiding never stops an agent.
 
-New visible windows automatically fit to a useful working size on opening, without an Auto-size button, title-bar fitting button or native sizing command. Hidden windows fit when shown. Auto-sized windows adapt when the native window or desktop container is resized. Manually adjusted windows and legacy custom layouts take precedence; repeated selections do not grow them. Clicking a form field does not move controls under the pointer. **Arrange** restores compact defaults; selecting/opening those windows fits them again. Hiding/showing preserves position, size and main-window maximize/restore state. Temporary viewport constraints clamp only the visible rectangle, not the saved preference, so a mobile detour does not destroy the desktop layout. Reload retains geometry/visibility for existing live windows. Obsolete Scout/Review starter layout entries are removed; unsaved manual drafts are not restored.
+New visible windows open at their **minimum usable width** with a **medium height** (60% of the desktop, not below each kind's minimum): main 610px, manual children 270px, delegated observers and utilities 400px. Hidden windows open that way when shown. Auto-sized windows keep the minimum width and adapt their medium height when the native window or desktop container is resized. Manually adjusted windows and legacy custom layouts take precedence; repeated selections do not change them. Clicking a form field does not move controls under the pointer. **Arrange** restores the compact presets; selecting/opening those windows opens them at the minimum width again. Hiding/showing preserves position, size and main-window maximize/restore state. Temporary viewport constraints clamp only the visible rectangle, not the saved preference, so a mobile detour does not destroy the desktop layout. Reload retains geometry/visibility for existing live windows. Obsolete Scout/Review starter layout entries are removed; unsaved manual drafts are not restored.
 
-Purpose-specific size presets (width × height, before viewport constraints):
+Compact presets remain purpose-specific and are the Arrange/anchor geometry (width × height, before viewport constraints):
 
-| Purpose | Compact / Arrange | Automatic working size |
+| Purpose | Compact / Arrange | Opening size |
 | --- | --- | --- |
-| Manual child | 325 × 310 | 460 × 510 |
-| Delegated observer | 560 × 430 | 800 × 660 |
-| Models | 700 × 540 | 940 × 700 |
-| Providers | 620 × 500 | 820 × 650 |
-| Workspace | 800 × 600 | 1080 × 780 |
-| Git | 760 × 560 | 1040 × 740 |
-| Usage | 560 × 420 | 740 × 560 |
-| Sessions | 680 × 520 | 900 × 700 |
-| Activity | 740 × 540 | 1020 × 760 |
-| Tools | 600 × 480 | 800 × 640 |
+| Manual child | 325 × 310 | 270 × medium |
+| Delegated observer | 560 × 430 | 400 × medium |
+| Models | 700 × 540 | 400 × medium |
+| Providers | 620 × 500 | 400 × medium |
+| Workspace | 800 × 600 | 400 × medium |
+| Git | 760 × 560 | 400 × medium |
+| Usage | 560 × 420 | 400 × medium |
+| Sessions | 680 × 520 | 400 × medium |
+| Activity | 740 × 540 | 400 × medium |
+| Tools | 600 × 480 | 400 × medium |
 
-Main opens at its larger responsive working size (width up to 1100); compact/Arrange size is up to 1000 × 780. Children grow leftward from their right-side anchors, with height bounded by the space below each anchor. Saved/manual rectangles take precedence over presets. The native app also supports an explicitly requested, one-shot [window-layout reset](macos.md#reset-window-layout-only).
+Medium height is `round(desktop height × 0.6)`, never below the kind minimum (main 440, child 250, utility/delegated 320). Main opens at 610 × medium (never wider than the desktop). Children grow leftward from their right-side anchors, with height bounded by the space below each anchor. Saved/manual rectangles take precedence over all of this and are kept. The native app also supports an explicitly requested, one-shot [window-layout reset](macos.md#reset-window-layout-only).
 
 | Window | Controls |
 | --- | --- |
@@ -146,7 +146,7 @@ CHROME_PATH='/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge' npm
 
 Completed checks:
 
-- Latest local native sizing/feature audit: **134/134** Node/real-DOM checks, integrated Chromium, isolated WKWebView, four terminal scenarios, and a rebuilt relocated app through direct/Finder launches passed. Includes responsive automatic sizing, protected manual geometry, hide/reopen, Reload with lost cached auth, and the idle/thinking/output background field. See the [feature-by-feature audit](native-feature-audit.md); the follow-up source is published on `main`, but no new release artifact exists.
+- Latest local native sizing/feature audit: **134/134** Node/real-DOM checks, integrated Chromium, isolated WKWebView, four terminal scenarios, and a rebuilt relocated app through direct/Finder launches passed. Includes minimum-width/medium-height opening geometry, saved manual sizes, hide/reopen, Reload with lost cached auth, and the idle/thinking/output background field. See the [feature-by-feature audit](native-feature-audit.md); the follow-up source is published on `main`, but no new release artifact exists.
 
 - Local inspection/combobox follow-up: **129/129** Node/real-DOM checks, integrated synthetic desktop browser, isolated WKWebView at 390px and 1440px, and four terminal PTY scenarios passed. No provider prompts, installed-app restart or deployment. See [validation](validation.md) for limitations.
 - Historical starter-removal/right-side placement follow-up: **102/102** Node/real-DOM checks passed without skips, plus the integrated fixture and isolated real-Pi browsers (no model prompts or saved-conversation changes). Startup/reload no longer create empty children; explicit manual drafts, observer anchoring, old-default migration, custom layout preservation and freed-position reuse across reload are covered.

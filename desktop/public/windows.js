@@ -4,20 +4,28 @@ const rectKeys = ['x', 'y', 'w', 'h'];
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validRect = (value) => isObject(value) && rectKeys.every((key) => Number.isFinite(value[key])) && value.w > 0 && value.h > 0;
 
-// Compact and working dimensions by purpose; unknown utility IDs retain a
-// roomy generic fallback. Manual children alone retain the main-relative cap.
+// Compact sizes by purpose; unknown utility IDs retain a roomy generic
+// fallback. Manual children alone retain the main-relative cap. Opening
+// geometry is separate: the minimum usable width with a medium height (see
+// workingRect), and the compact presets are the Arrange/anchor layout.
 const profiles = {
-  models: [700, 540, 940, 700],
-  providers: [620, 500, 820, 650],
-  workspace: [800, 600, 1080, 780],
-  git: [760, 560, 1040, 740],
-  usage: [560, 420, 740, 560],
-  sessions: [680, 520, 900, 700],
-  activity: [740, 540, 1020, 760],
-  tools: [600, 480, 800, 640],
+  models: [700, 540],
+  providers: [620, 500],
+  workspace: [800, 600],
+  git: [760, 560],
+  usage: [560, 420],
+  sessions: [680, 520],
+  activity: [740, 540],
+  tools: [600, 480],
 };
-const profileFor = (kind, id) => kind === 'delegated' ? [560, 430, 800, 660]
-  : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660, 960, 740]) : null;
+const profileFor = (kind, id) => kind === 'delegated' ? [560, 430]
+  : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660]) : null;
+// Minimum usable width/height per kind, shared by opening geometry and
+// viewport clamping so they cannot drift apart.
+const minimum = (kind) => kind === 'main' ? { w: 610, h: 440 }
+  : kind === 'subagent' ? { w: 270, h: 250 } : { w: 400, h: 320 };
+// Opening height as a fraction of the desktop; medium, not the full canvas.
+const MEDIUM_HEIGHT = .6;
 
 function readLayout() {
   const saved = Object.create(null);
@@ -268,15 +276,15 @@ export class DesktopWindows {
   }
   workingRect(win) {
     const w = this.desktop.clientWidth, h = this.desktop.clientHeight;
-    const profile = profileFor(win.kind, win.id);
-    const target = win.kind === 'main' ? { w: Math.min(1100, w * .76), h: h * .94 }
-      : profile ? { w: Math.min(profile[2], w * .8), h: Math.min(profile[3], h * .9) }
-        : { w: 460, h: 510 };
+    const limits = minimum(win.kind);
+    // Open at the minimum usable width with a medium height. Manual resizing
+    // replaces these values for that window and keeps them (sizeMode manual).
+    const target = { w: Math.min(limits.w, Math.max(1, w - 8)), h: Math.max(limits.h, Math.round(h * MEDIUM_HEIGHT)) };
     const child = win.kind === 'subagent' || win.kind === 'delegated';
     // Grow toward the left, keeping the right-side child anchors. Fit the
     // available height below each anchor rather than piling every child at top.
     const x = child && win.sizeMode === 'compact' ? win.layoutRect.x + win.layoutRect.w - target.w : win.layoutRect.x;
-    if (child) target.h = Math.min(target.h, Math.max(win.kind === 'delegated' ? 320 : 250, h - win.layoutRect.y - 8));
+    if (child) target.h = Math.min(target.h, Math.max(limits.h, h - win.layoutRect.y - 8));
     return { ...win.layoutRect, ...target, x };
   }
   autoSize(win = this.focused) {
@@ -303,9 +311,10 @@ export class DesktopWindows {
     const maxW = small ? Math.max(1, Math.min(460, (main?.rect.w ?? 800) - 140, areaW - 8)) : areaW - 8;
     const maxH = small ? Math.max(1, Math.min(510, (main?.rect.h ?? 680) - 100, areaH - 8)) : areaH - 8;
     const defaults = this.defaultRect(win.kind, win.index, win.id);
+    const limits = minimum(win.kind);
     const rect = Object.fromEntries(rectKeys.map((key) => [key, Number.isFinite(requested?.[key]) ? requested[key] : defaults[key]]));
-    const w = clamp(rect.w, Math.min(win.kind === 'main' ? 610 : small ? 270 : 400, maxW), maxW);
-    const h = clamp(rect.h, Math.min(win.kind === 'main' ? 440 : small ? 250 : 320, maxH), maxH);
+    const w = clamp(rect.w, Math.min(limits.w, maxW), maxW);
+    const h = clamp(rect.h, Math.min(limits.h, maxH), maxH);
     const x = clamp(rect.x, 0, Math.max(0, areaW - w));
     const y = clamp(rect.y, 0, Math.max(0, areaH - h));
     win.rect = { x, y, w, h };
