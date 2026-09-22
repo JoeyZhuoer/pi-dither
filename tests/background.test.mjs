@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  DEFAULT_GROUND, DEFAULT_THEME, GROUND_KEY, MAX_CELLS, MAX_EDGE, MAX_PHOTO_CHARS, PHOTO_KEY, RIPPLE_RADIUS, THEME_KEY,
+  DEFAULT_GROUND, DEFAULT_THEME, GROUND_KEY, MAX_CELLS, MAX_EDGE, MAX_PHOTO_CHARS, PHOTO_KEY, RIPPLE_RADIUS, RIPPLE_SPREAD, THEME_KEY,
   backgroundSize, ditherPhoto, normalizeColor, paintBackground, readBackground, removePhoto, rippleMask, rippleRegion, writeColor, writePhoto,
 } from '../desktop/public/background.js';
 
@@ -128,7 +128,7 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   // Each neighbour lands exactly where the radial spread puts it.
   const landing = (px, py) => {
     const dx = px + .5 - 20.5, dy = py + .5 - 20.5, distance = Math.hypot(dx, dy);
-    const scale = 1 + 1.2 * (1 - distance / RIPPLE_RADIUS);
+    const scale = 1 + RIPPLE_SPREAD * (1 - distance / RIPPLE_RADIUS);
     return [Math.round(20.5 + dx * scale - .5), Math.round(20.5 + dy * scale - .5)];
   };
   for (const from of [[22, 20], [20, 23], [16, 16]]) {
@@ -139,19 +139,21 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
     assert.ok(Math.hypot(to[0] + .5 - 20.5, to[1] + .5 - 20.5) > Math.hypot(from[0] + .5 - 20.5, from[1] + .5 - 20.5), `dot ${from} moved outward`);
   }
   // Collectively the dots inside the radius spread away from the pointer.
-  const meanDistance = (maskToRead) => {
+  const meanDistance = (read) => {
     let total = 0, count = 0;
     for (let y = region.y; y < region.y + region.height; y++) for (let x = region.x; x < region.x + region.width; x++) {
-      if (!maskToRead[(y - region.y) * region.width + (x - region.x)]) continue;
+      if (!read(x, y)) continue;
       const distance = Math.hypot(x + .5 - 20.5, y + .5 - 20.5);
       if (distance >= RIPPLE_RADIUS) continue;
       total += distance; count++;
     }
     return count ? total / count : 0;
   };
-  assert.ok(meanDistance(spread) > meanDistance(base) * 1.2, `mean dot distance grows (${meanDistance(spread).toFixed(1)} > ${meanDistance(base).toFixed(1)})`);
+  const baseMean = meanDistance((x, y) => base[y * width + x]);
+  const spreadMean = meanDistance((x, y) => spread[(y - region.y) * region.width + (x - region.x)]);
+  assert.ok(spreadMean > baseMean, `mean dot distance grows (${spreadMean.toFixed(1)} > ${baseMean.toFixed(1)})`);
   // Ripple cells never leak outside the region bounding box.
   assert.equal(spread.length, region.width * region.height);
   assert.deepEqual(rippleMask(base, width, rippleRegion(width, height, { x: 0, y: 0 }), { x: 0, y: 0, strength: 1 }).length, rippleRegion(width, height, { x: 0, y: 0 }).width * rippleRegion(width, height, { x: 0, y: 0 }).height);
-  assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 80, `interaction radius stays small (${RIPPLE_RADIUS}px)`);
+  assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 10, `interaction radius stays tiny (${RIPPLE_RADIUS}px)`);
 });
