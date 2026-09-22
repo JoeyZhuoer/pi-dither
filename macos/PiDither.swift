@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import UniformTypeIdentifiers
 
 // The web UI is local content inside a native application, not a browser launch.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
@@ -243,6 +244,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         let alert = NSAlert(); alert.messageText = "Pi Dither"; alert.informativeText = String(message.prefix(4000)); alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "Confirm")
         completionHandler(alert.runModal() == .alertSecondButtonReturn)
     }
+    // The background-photo picker stays inside the app: images only, no shell.
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.image]
+        panel.beginSheetModal(for: window) { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
+    }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
         let alert = NSAlert(); alert.messageText = "Pi Dither"; alert.informativeText = String(prompt.prefix(4000)); alert.addButton(withTitle: "Cancel"); alert.addButton(withTitle: "OK")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24)); field.stringValue = defaultText ?? ""; alert.accessoryView = field
@@ -353,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.window.setContentSize(size)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.runSmokeStage(name) }
             } else {
-                print("PASS: native feature checks — eight utilities, minimum-width/medium-height opening, native resize, manual layouts, maximize, draft controls, menus, plain background, hide/reopen, Reload and unchanged conversation.")
+                print("PASS: native feature checks — nine utilities, minimum-width/medium-height opening, native resize, manual layouts, maximize, draft controls, menus, background colour/photo dither, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

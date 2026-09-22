@@ -95,7 +95,7 @@ test('compact presets stay purpose-specific while windows open at minimum width 
   const main = addMain(manager);
   const child = manager.add({ id: 'child', title: 'Child', kind: 'subagent' });
   const delegate = manager.add({ id: 'opaque-run-child', title: 'Observer', kind: 'delegated' });
-  const ids = ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools'];
+  const ids = ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background'];
   const compact = new Set(), opened = new Set();
   for (const id of ids) {
     const win = addUtility(manager, id);

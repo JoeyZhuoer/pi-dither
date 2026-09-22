@@ -2,6 +2,7 @@ import { DesktopWindows, nextSubagentIndex, subagentIndexFromName } from './wind
 import { installDelegatedObservers, aggregateActivity, delegationNotice, delegationRows } from './delegated.js';
 import { renderMarkdown } from './markdown.js';
 import { installFeatureWindows, installUsageDiagram } from './features.js';
+import { createBackground } from './background.js';
 import { createInspectionPanel } from './inspection.js';
 import { installComboboxes, syncCombobox } from './combobox.js';
 
@@ -392,7 +393,9 @@ async function eventStream() {
 
 createAgentPanel('main', 'Main agent', 'main');
 installComboboxes(document);
-features = installFeatureWindows({ windows, api, toast, getState: featureState });
+// Static background: persisted ground color plus an optional dithered photo.
+const background = createBackground({ canvas: $('#background'), storage: localStorage });
+features = installFeatureWindows({ windows, api, toast, getState: featureState, background });
 usageDiagram = installUsageDiagram($('#usage-diagram'), () => {
   if (desktopVersion) features.open('usage');
   else toast('Detailed usage requires the v0.3 desktop server.');

@@ -23,7 +23,7 @@
     "test:macos": "node tests/macos-smoke.mjs",
     "test:webkit": "node tests/webkit-smoke.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:desktop": "node --test tests/desktop.test.mjs tests/controls.test.mjs tests/control-races.test.mjs tests/markdown.test.mjs tests/windows.test.mjs tests/features.test.mjs tests/tools.test.mjs tests/subagent-slots.test.mjs tests/extensions.test.mjs tests/delegations.test.mjs tests/delegation-live.test.mjs tests/delegated.test.mjs tests/inspection.test.mjs tests/inspection-ui.test.mjs tests/combobox.test.mjs",
+    "test:desktop": "node --test tests/desktop.test.mjs tests/controls.test.mjs tests/control-races.test.mjs tests/markdown.test.mjs tests/windows.test.mjs tests/features.test.mjs tests/background.test.mjs tests/tools.test.mjs tests/subagent-slots.test.mjs tests/extensions.test.mjs tests/delegations.test.mjs tests/delegation-live.test.mjs tests/delegated.test.mjs tests/inspection.test.mjs tests/inspection-ui.test.mjs tests/combobox.test.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
     "test:terminal": "python3 tests/terminal-smoke.py"
   }

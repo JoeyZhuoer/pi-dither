@@ -34,7 +34,7 @@ async function piDitherSmoke(stage) {
     trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     check(trigger.getAttribute('aria-expanded') === 'false' && select.value === 'steer', 'dropdown cancellation');
     const sizes = new Set();
-    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
+    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background']) {
       $(`[data-feature="${id}"]`).click();
       const win = $(`[data-window-id="${id}"]`), status = $(`[data-testid="${id}-status"]`);
       await wait(() => !win.hidden && status.textContent !== 'Loading…');
@@ -48,6 +48,27 @@ async function piDitherSmoke(stage) {
       win.querySelector('[aria-label="Close utility window"]').click();
     }
     check(sizes.size === 1 && [...sizes][0].startsWith('400px/'), 'utilities open at the minimum width with a medium height');
+    // Background window: ground colour and a locally dithered photo (no file dialog).
+    $('[data-feature="background"]').click();
+    await wait(() => !$('[data-window-id="background"]').hidden);
+    check(!$('#backdrop, #background-motion'), 'the old animated backdrop stays removed');
+    const ground = $('[data-testid="background-ground"]');
+    ground.value = '#123456'; ground.dispatchEvent(new Event('input', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:ground:v1') === '#123456', 'ground colour persists');
+    check(getComputedStyle(document.documentElement).getPropertyValue('--ground').trim() === '#123456', 'ground colour applies to the desk');
+    const photo = $('[data-testid="background-photo"]');
+    const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); });
+    const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
+    photo.files = transfer.files; photo.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(() => localStorage.getItem('pi-desktop:photo:v1') !== null);
+    const canvas = $('#background'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let inkCount = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 32 && pixels[i + 1] === 32 && pixels[i + 2] === 31) inkCount++;
+    check(inkCount > pixels.length / 4 * .15 && inkCount < pixels.length / 4 * .6, `photo dithers into ink (${inkCount})`);
+    $('[data-testid="background-remove"]').click();
+    check(localStorage.getItem('pi-desktop:photo:v1') === null, 'photo removal clears storage');
+    $('[data-testid="background-default"]').click();
+    check(localStorage.getItem('pi-desktop:ground:v1') === '#e58da5', 'default ground restored');
+    $('[data-window-id="background"] button[aria-label="Close utility window"]').click();
     check($('[data-testid="providers-key"]').type === 'password' && !$('[data-testid="providers-key"]').value, 'empty credential control');
     check($('[data-testid="tools-tool-subagent"]')?.checked, 'extension selection reflected');
     $('#add-agent').click();

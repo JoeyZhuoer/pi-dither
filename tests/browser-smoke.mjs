@@ -101,10 +101,11 @@ try {
   assert.equal(await evaluate('document.querySelectorAll(".app-window:not([hidden])").length'), 1, 'startup opens only main, not automatic Scout/Review drafts');
   assert.equal(await evaluate('document.querySelectorAll("[data-subagent-index]").length'), 0);
   assert.equal(await evaluate('Object.keys(JSON.parse(localStorage.getItem("pi-desktop:layout:v1"))).some(id => ["draft-scout", "draft-review"].includes(id))'), false, 'obsolete starter layouts are removed');
-  assert.equal(await evaluate('document.querySelectorAll(".utility-window[hidden]").length'), 8);
+  assert.equal(await evaluate('document.querySelectorAll(".utility-window[hidden]").length'), 9);
   assert.equal(await evaluate('document.querySelector("[data-window-id=windows], [data-feature=windows]")'), null, 'legacy Window Manager is not restored');
   assert.equal(await evaluate('document.querySelectorAll("[data-feature=tools]").length'), 1);
-  assert.equal(await evaluate('document.querySelector("#backdrop, #background-motion")'), null, 'no background pattern or motion control is rendered');
+  assert.equal(await evaluate('document.querySelector("#backdrop, #background-motion")'), null, 'the old animated backdrop and its motion control are gone');
+  assert.ok(await evaluate('document.querySelector("#background") instanceof HTMLCanvasElement && document.querySelector("[data-feature=background]")'), 'the static background canvas and window exist');
   if (app) {
     // Synthetic busy states still update the aggregated fleet activity; no provider or prompt.
     const main = app.sessions.get('main');
@@ -117,6 +118,28 @@ try {
     await setActivity('running', 'output', 'output');
     await setActivity('stopped', 'idle', 'idle');
     main.state.phase = 'idle'; main.emit('change');
+
+    // Background window: ground colour plus a locally dithered photo.
+    assert.equal(await evaluate(`(() => { document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="background"]').click(); return !document.querySelector('[data-window-id="background"]').hidden; })()`), true, 'background window opens');
+    await evaluate(`{ const input = document.querySelector('[data-testid="background-ground"]'); input.value = '#123456'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
+    assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--ground").trim()'), '#123456');
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:ground:v1")'), '#123456');
+    assert.equal(await evaluate(`(() => { const c = document.querySelector('#background'); return [c.width, c.height, Array.from(c.getContext('2d').getImageData(2, 2, 1, 1).data).slice(0, 3).join(',')].join('|'); })()`).then((value) => value.split('|')[2]), '18,52,86', 'canvas is filled with the chosen ground colour');
+    // A synthetic half-black/half-white photo exercises the dither without a file dialog.
+    await evaluate(`(async () => {
+      const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); });
+      const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
+      const input = document.querySelector('[data-testid="background-photo"]');
+      input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
+    const dithered = await evaluate(`(() => { const c = document.querySelector('#background'); const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let ink = 0; for (let i = 0; i < data.length; i += 4) if (data[i] === 32 && data[i + 1] === 32 && data[i + 2] === 31) ink++; return { ink, total: data.length / 4 }; })()`);
+    assert.ok(dithered.ink > dithered.total * .15 && dithered.ink < dithered.total * .6, `photo dithers into ink (${dithered.ink}/${dithered.total})`);
+    await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'removing the photo clears storage');
+    await evaluate(`document.querySelector('[data-testid="background-default"]').click()`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:ground:v1")'), '#e58da5', 'default colour is restored');
+    await evaluate(`document.querySelector('[data-window-id="background"] button[aria-label="Close utility window"]').click()`);
   }
   await evaluate('document.querySelector("#help").click(); document.querySelector("#help-dialog").close()');
   assert.equal(await evaluate('document.querySelectorAll(".sub-window").length'), 0, 'no child shell exists before an explicit launch or delegation');
@@ -199,7 +222,7 @@ try {
   }
   const compactModels = await evaluate('parseFloat(document.querySelector("[data-window-id=models]").style.width)');
   assert.ok(compactModels > 400, 'compact models preset is roomier than the opening width');
-  for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
+  for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background']) {
     await evaluate(`document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="${id}"]').click()`);
     await until(`document.querySelector('[data-window-id="${id}"]').hidden === false`);
     await until(`document.querySelector('[data-testid="${id}-status"]').textContent !== 'Loading…'`);
@@ -240,7 +263,7 @@ try {
   await evaluate(`for (const button of document.querySelectorAll('.app-window:not([hidden]) button[aria-label="Minimize window"]')) button.click()`);
   assert.equal(await evaluate('document.querySelectorAll(".app-window:not([hidden])").length'), 0);
   await evaluate(`for (const button of document.querySelectorAll('#tasks button')) button.click()`);
-  assert.equal(await evaluate('document.querySelectorAll(".utility-window:not([hidden])").length'), 8);
+  assert.equal(await evaluate('document.querySelectorAll(".utility-window:not([hidden])").length'), 9);
   await evaluate(`for(const button of document.querySelectorAll('.utility-window button[aria-label="Close utility window"]')) button.click(); document.querySelector('[data-feature="usage"]').click()`);
   const featuresScreenshot = await rpc('Page.captureScreenshot', { format: 'png' });
   await writeFile(resolve(`.local/desktop-features-${app ? 'fixture' : 'live'}.png`), Buffer.from(featuresScreenshot.data, 'base64'));

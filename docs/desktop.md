@@ -8,9 +8,9 @@ Based on the user-supplied retro desktop reference (`截屏2026-09-19 16.54.12.p
 
 The main agent has the largest agent window. Subagent windows are draggable, resizable within smaller bounds, minimizable, and closable. Window geometry and visibility stay in localStorage; transcripts and credentials do not. The clock is decorative. Startup does not create Scout/Review drafts. Manual drafts are created only through **+ Subagent**, and remain NOT STARTED until Launch. Subagent display numbers are reusable labels, separate from UUID/session identity: closing releases a number, minimizing does not, and surviving agents keep their numbers. The server resolves conflicting draft reservations from different tabs.
 
-The desktop is a plain dusty-pink ground: no pattern, canvas, animation or motion preference is drawn. Aggregated fleet activity (output over thinking/tool/unknown over idle) is still computed for the Activity window and exposed as `#desktop[data-activity]`, but it paints nothing. This keeps the retro window chrome as the only visual layer.
+The desktop ground defaults to the dusty pink and is user-controlled: the **Background** window offers a colour input plus a photo picker. A chosen photo is downscaled, stored in this browser profile, and painted as an ordered dither between the ground colour and the same dark ink used everywhere else, so it reads as part of the retro desktop. No photo means a flat ground. Nothing animates; there is no pattern loop, canvas timer or motion preference. Aggregated fleet activity (output over thinking/tool/unknown over idle) is still computed for the Activity window and exposed as `#desktop[data-activity]`, but it paints nothing.
 
-Nothing is scheduled for the background and the removed canvas no longer exists, so pagehide, reduced-motion and pause handling do not apply to it.
+The background repaints only when the colour, photo or viewport changes (resize is debounced by 150 ms); no timers run for it. The photo bitmap uses the same bounded grid (at most 100,000 cells, 2048px edge) and cover-fits the window. Ground colour and photo persist in the local website store (`pi-desktop:ground:v1`, `pi-desktop:photo:v1`); the one-shot window-layout reset does not touch them.
 
 The usage diagram follows the last selected real agent window, retaining that selection while utility/draft windows are focused. It shows reported session input/output/cache tokens, total tokens, cost and context occupancy. Token bars share a scale relative to the largest category; cache combines read and write. Unknown values remain `—`, zero is shown as zero, and provisional active-turn tokens are separate rather than added again to session totals. Disconnects mark the last reported data as offline. Click the diagram heading for detailed Usage. It uses existing SSE snapshots, without polling, model prompts or estimated activity; on mobile it appears beneath the stacked windows.
 
@@ -50,7 +50,8 @@ Compact presets remain purpose-specific and are the Arrange/anchor geometry (wid
 | Usage | 560 × 420 | 400 × medium |
 | Sessions | 680 × 520 | 400 × medium |
 | Activity | 740 × 540 | 400 × medium |
-| Tools | 600 × 480 | 400 × medium |
+| Tools | 600 × 480 |
+| Background | 620 × 520 | 400 × medium |
 
 Medium height is `round(desktop height × 0.6)`, never below the kind minimum (main 440, child 250, utility/delegated 320). Main opens at 610 × medium (never wider than the desktop). Children grow leftward from their right-side anchors, with height bounded by the space below each anchor. Saved/manual rectangles take precedence over all of this and are kept. The native app also supports an explicitly requested, one-shot [window-layout reset](macos.md#reset-window-layout-only).
 

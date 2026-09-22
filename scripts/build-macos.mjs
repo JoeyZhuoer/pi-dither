@@ -33,7 +33,7 @@ await mkdir(appSource, { recursive: true });
 const appFiles = [
   'package.json', 'scripts/pi-paths.mjs',
   ...['server', 'pi-session', 'protocol', 'controls', 'workspace', 'tools', 'extensions', 'rpc-host', 'delegations', 'delegation-bridge', 'inspection', 'subagent-slots', 'native-host'].map((name) => `desktop/${name}.mjs`),
-  ...['app.js', 'delegated.js', 'inspection.js', 'inspection.css', 'combobox.js', 'combobox.css', 'features.js', 'features.css', 'markdown.js', 'markdown.css', 'windows.js', 'index.html', 'styles.css', 'assets/VT323-Regular.ttf', 'assets/OFL.txt'].map((name) => `desktop/public/${name}`),
+  ...['app.js', 'background.js', 'delegated.js', 'inspection.js', 'inspection.css', 'combobox.js', 'combobox.css', 'features.js', 'features.css', 'markdown.js', 'markdown.css', 'windows.js', 'index.html', 'styles.css', 'assets/VT323-Regular.ttf', 'assets/OFL.txt'].map((name) => `desktop/public/${name}`),
 ];
 for (const path of appFiles) await cp(join(root, path), join(appSource, path));
 const hashFiles = (paths, base) => Promise.all(paths.map(async (path) => ({ path, sha256: createHash('sha256').update(await readFile(join(base, path))).digest('hex') })));

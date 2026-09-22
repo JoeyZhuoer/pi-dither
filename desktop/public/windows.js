@@ -17,6 +17,7 @@ const profiles = {
   sessions: [680, 520],
   activity: [740, 540],
   tools: [600, 480],
+  background: [620, 520],
 };
 const profileFor = (kind, id) => kind === 'delegated' ? [560, 430]
   : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660]) : null;

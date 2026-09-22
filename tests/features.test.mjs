@@ -117,7 +117,7 @@ test('feature controller preserves drafts, targets selected agents, protects cre
     windows.add({ id: 'main', title: 'Main', kind: 'main' }); windows.add({ id: 'child', title: 'Child', kind: 'subagent' });
     features = installFeatureWindows({ windows, api, getState: () => state });
     const utilities = windows.list().filter(win => win.kind === 'utility');
-    assert.equal(utilities.length, 8); assert.ok(utilities.every(win => win.hidden)); assert.equal(calls.length, 0);
+    assert.equal(utilities.length, 9); assert.ok(utilities.every(win => win.hidden)); assert.equal(calls.length, 0);
     features.open('models'); el('models-agent').value = 'child'; el('models-agent').dispatchEvent(new Event('change'));
     el('models-model').value = 'two'; for (let i = 0; i < 20; i++) features.update(state);
     assert.equal(el('models-model').value, 'two'); assert.equal(calls.length, 0);
@@ -175,6 +175,7 @@ test('feature menu replaces manager with Tools and Help documents the plain back
   const html = await readFile(new URL('../desktop/public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /data-feature="windows"|Window manager|window management/);
   assert.match(html, /data-feature="tools"/);
+  assert.match(html, /data-feature="background">Background/);
   assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
   assert.match(html, /plain dusty-pink ground/);
@@ -284,10 +285,11 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
   const source = await readFile(new URL('../desktop/public/features.js', import.meta.url));
   const css = await readFile(new URL('../desktop/public/features.css', import.meta.url));
   const windowsSource = await readFile(new URL('../desktop/public/windows.js', import.meta.url));
+  const backgroundSource = await readFile(new URL('../desktop/public/background.js', import.meta.url));
   const comboSource = await readFile(new URL('../desktop/public/combobox.js', import.meta.url));
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : req.url === '/features.css' ? 'text/css' : 'text/html');
-    res.end(req.url === '/combobox.js' ? comboSource : req.url === '/features.js' ? source : req.url === '/windows.js' ? windowsSource : req.url === '/features.css' ? css : '<!doctype html><title>Feature fixture</title><link rel="stylesheet" href="/features.css"><main id="desktop"></main>');
+    res.end(req.url === '/combobox.js' ? comboSource : req.url === '/features.js' ? source : req.url === '/windows.js' ? windowsSource : req.url === '/background.js' ? backgroundSource : req.url === '/features.css' ? css : '<!doctype html><title>Feature fixture</title><link rel="stylesheet" href="/features.css"><main id="desktop"></main>');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const profile = await mkdtemp(join(tmpdir(), 'pi-feature-test-'));
@@ -372,7 +374,7 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
         };
         const hold = (path) => { let resolve; const promise = new Promise(done => resolve = done); deferred.set(path, { promise, resolve }); return value => { deferred.delete(path); resolve(value); }; };
         const features = installFeatureWindows({ windows, api, toast: value => toasts.push(value), getState: () => state });
-        check([...map.values()].filter(win => win.kind === 'utility').length === 8 && [...map.values()].filter(win => win.kind === 'utility').every(win => win.hidden), 'eight utility windows initially hidden');
+        check([...map.values()].filter(win => win.kind === 'utility').length === 9 && [...map.values()].filter(win => win.kind === 'utility').every(win => win.hidden), 'nine utility windows initially hidden');
         check(calls.length === 0, 'installation makes no requests or prompts');
         check(features.open('tools', 'child') && el('tools-agent').value === 'child', 'Tools shortcut targets selected agent');
         check(el('tools-tool-read').checked && !el('tools-tool-ls').checked && !el('feature-tools').querySelector('img'), 'Tools checks reported active names and safely renders descriptions');
@@ -472,7 +474,7 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
         toolsWindow.element.querySelector('[aria-label="Close utility window"]').click();
         check(toolsWindow.element.hidden, 'normal utility close retained');
         engine.show('tools'); engine.arrange();
-        check(!toolsWindow.element.hidden && tasks.children.length === 8, 'Arrange and eight feature tasks retained');
+        check(!toolsWindow.element.hidden && tasks.children.length === 9, 'Arrange and nine feature tasks retained');
         legacyFeatures.dispose(); desktop.remove(); tasks.remove(); localStorage.removeItem('pi-desktop:layout:v1');
 
         return checks;

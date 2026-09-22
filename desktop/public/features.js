@@ -1,8 +1,10 @@
 import { syncCombobox } from './combobox.js';
+import { DEFAULT_GROUND } from './background.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
   git: 'Git & worktrees', usage: 'Usage', sessions: 'Sessions', activity: 'Activity', tools: 'Tools',
+  background: 'Background & photo',
 };
 const idle = (agent) => !!agent && ['idle', 'stopped', 'error'].includes(agent.phase);
 const number = (value) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : 'Unknown';
@@ -99,7 +101,7 @@ export function installUsageDiagram(root, openUsage) {
 }
 
 /** Utility windows issue metadata/control requests only; they never send model prompts. */
-export function installFeatureWindows({ windows, api, toast = () => {}, getState }) {
+export function installFeatureWindows({ windows, api, toast = () => {}, getState, background }) {
   let state = getState() || { agents: [], connected: false }, disposed = false, mutation = false;
   const events = new AbortController(), panels = new Map(), guards = new Map();
   const agents = () => state.agents || [];
@@ -339,6 +341,42 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     choices(providerChoice, items.length ? items.map((item) => [item.id, item.name || item.id]) : [['', 'No configurable built-in providers']]); controls();
   }); refreshButton(providersPanel);
 
+  // Background: ground colour and a locally stored dithered photo. No requests
+  // and no timers; changes apply immediately and persist in this browser profile.
+  const backgroundPanel = panels.get('background');
+  backgroundPanel.content.append(node('p', 'The photo is downscaled, stored locally and dithered into the ground colour. Nothing is uploaded. Very large photos show until the app restarts.'));
+  const backgroundForm = node('form', null, 'feature-form'); backgroundPanel.content.append(backgroundForm);
+  const groundInput = field(backgroundForm, 'Ground colour', 'background-ground', 'color');
+  const photoInput = field(backgroundForm, 'Photo', 'background-photo', 'file');
+  photoInput.accept = 'image/*';
+  const usesBackground = () => !!background;
+  const groundDefault = button('Default colour', 'background-default', () => {
+    if (!background) return;
+    groundInput.value = background.setGround(DEFAULT_GROUND);
+    message(backgroundPanel, `Ground colour reset to ${DEFAULT_GROUND}.`);
+  });
+  const photoRemove = button('Remove photo', 'background-remove', () => {
+    if (!background) return;
+    background.clearPhoto(); photoInput.value = '';
+    message(backgroundPanel, 'Photo removed. The ground colour stays.');
+  });
+  backgroundForm.append(groundDefault, photoRemove);
+  guard(groundInput, usesBackground); guard(photoInput, usesBackground);
+  guard(groundDefault, usesBackground); guard(photoRemove, usesBackground);
+  on(groundInput, 'input', () => { if (background) background.setGround(groundInput.value); });
+  on(groundInput, 'change', () => { if (background) message(backgroundPanel, `Ground colour ${background.state.ground}.`); });
+  on(photoInput, 'change', () => {
+    const file = photoInput.files && photoInput.files[0];
+    if (!background || !file) return;
+    message(backgroundPanel, 'Preparing photo…');
+    void background.setPhotoFile(file).then((result) => {
+      if (!disposed) message(backgroundPanel, result.message, result.ok && !result.stored);
+    }).catch((error) => {
+      if (!disposed) message(backgroundPanel, error.message || 'The photo could not be used.', true);
+    }).finally(() => { photoInput.value = ''; });
+  });
+  const renderBackground = () => { if (background) groundInput.value = background.state.ground; };
+
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.
   const workspace = panels.get('workspace');
   const workspaceCurrent = node('p'); workspace.content.append(workspaceCurrent);
@@ -555,7 +593,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     const wasConnected = state.connected; state = snapshot || getState() || { agents: [] };
     for (const panel of panels.values()) panel.connection.textContent = state.connected ? '' : 'Disconnected. Metadata may be stale; controls are unavailable.';
     workspaceCurrent.textContent = `Current workspace: ${state.cwd || 'Unknown'}`;
-    renderModels(); renderTools(); renderActivity();
+    renderModels(); renderTools(); renderActivity(); renderBackground();
     if (usageRows) {
       usageRows = agents().map((agent) => {
         const previous = usageRows.find((row) => row.id === agent.id && row.sessionId === agent.sessionId);
@@ -571,7 +609,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
       invalidate(['workspace', 'git', 'usage', 'sessions', 'providers']);
     }
   }
-  renderModels(); renderTools(); renderActivity(); renderUsage(); windowChanges();
+  renderModels(); renderTools(); renderActivity(); renderUsage(); renderBackground(); windowChanges();
   return {
     open(id, agentId) {
       if (disposed || !panels.has(id)) return false;

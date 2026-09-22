@@ -29,7 +29,7 @@ export async function checkWindowsDOM({ DesktopWindows }) {
     assert(child.sizeMode === 'auto' && observer.sizeMode === 'auto', 'children and observers fit on creation');
     assert(main.rect.w > observer.rect.w && observer.rect.w > child.rect.w, 'agent purposes have distinct minimum widths');
     const dimensions = new Set();
-    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools']) {
+    for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background']) {
       const win = engine.add({ id, kind: 'utility', title: id, hidden: true });
       win.task.click();
       assert(win.sizeMode === 'auto' && win.rect.w === 400 && win.rect.h === 456, id + ' opens at minimum width and medium height');
@@ -37,8 +37,8 @@ export async function checkWindowsDOM({ DesktopWindows }) {
       win.element.querySelector('[aria-label="Close utility window"]').click(); assert(win.element.hidden, id + ' close remains hide');
     }
     assert(dimensions.size === 1 && [...dimensions][0] === '400/456', 'opening size is uniform: minimum width, medium height');
-    const presets = new Set(['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools'].map(id => { const rect = engine.defaultRect('utility', 0, id); return rect.w + '/' + rect.h; }));
-    assert(presets.size === 8, 'compact presets stay purpose-specific');
+    const presets = new Set(['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background'].map(id => { const rect = engine.defaultRect('utility', 0, id); return rect.w + '/' + rect.h; }));
+    assert(presets.size === 9, 'compact presets stay purpose-specific');
     const models = engine.windows.get('models'); engine.show(models.id);
     const fixedWidth = models.rect.w, tall = models.rect.h;
     // Intentionally no synthetic window.resize: ResizeObserver must notice the container.
