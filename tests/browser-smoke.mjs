@@ -148,21 +148,23 @@ try {
     await evaluate(`document.querySelector('[data-window-id="background"] button[aria-label="Close utility window"]').click()`);
   }
 
-  // Window settings (top right): less frequent windows start hidden and the user
-  // chooses what stays in the Windows menu; the choice is remembered.
+  // Window settings (top right): they control the bottom bar. Less frequent
+  // windows start out of it, every window stays in the Windows menu, and the
+  // choice is remembered.
   assert.ok(await evaluate('!!document.querySelector("#settings") && !!document.querySelector("#settings-dialog") && !!document.querySelector("#settings-list")'), 'settings control exists');
-  assert.ok(await evaluate('document.querySelector("[data-feature=workspace]").hidden && document.querySelector("[data-feature=providers]").hidden && !document.querySelector("[data-feature=usage]").hidden'), 'less frequent windows start out of the menu');
+  assert.ok(await evaluate('document.querySelector("#tasks button[data-window-id=workspace]").hidden && document.querySelector("#tasks button[data-window-id=providers]").hidden && !document.querySelector("#tasks button[data-window-id=usage]").hidden'), 'less frequent windows start out of the bottom bar');
+  assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), false, 'every window stays in the Windows menu');
   await evaluate(`document.querySelector('#settings').click()`);
   assert.equal(await evaluate('document.querySelector("#settings-dialog").open'), true, 'settings dialog opens');
   assert.equal(await evaluate('document.querySelectorAll("#settings-list input[type=checkbox]").length'), 9, 'every window is listed in settings');
   await evaluate(`{ const box = document.querySelector('[data-testid="settings-workspace"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#settings-dialog').close(); }`);
-  assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), false, 'ticking a window adds it to the menu');
-  assert.deepEqual(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:windows:v1")).sort()'), ['activity', 'background', 'sessions', 'tools', 'usage', 'workspace'], 'choice persists');
+  assert.equal(await evaluate('document.querySelector("#tasks button[data-window-id=workspace]").hidden'), false, 'ticking a window adds its bottom button');
+  assert.deepEqual(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:taskbar:v1")).sort()'), ['activity', 'background', 'sessions', 'tools', 'usage', 'workspace'], 'choice persists');
   await until('document.querySelector("#settings-dialog").open === false');
   await evaluate(`document.querySelector('#settings').click(); { const box = document.querySelector('[data-testid="settings-workspace"]'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#settings-dialog').close(); }`);
-  assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), true, 'unticking removes it again');
+  assert.equal(await evaluate('document.querySelector("#tasks button[data-window-id=workspace]").hidden'), true, 'unticking hides it again');
   await evaluate(`document.querySelector('#settings').click(); document.querySelector('[data-testid="settings-open-git"]').click()`);
-  assert.equal(await evaluate('document.querySelector("[data-window-id=git]").hidden'), false, 'settings can open a hidden window directly');
+  assert.equal(await evaluate('document.querySelector("[data-window-id=git]").hidden'), false, 'settings can open a bottom-bar-hidden window directly');
   await evaluate(`document.querySelector('[data-window-id=git] button[aria-label="Close utility window"]').click()`);
 
   // Pointer ripple: with a photo in place the dots spread under the pointer and

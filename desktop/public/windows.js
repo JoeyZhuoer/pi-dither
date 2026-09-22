@@ -43,6 +43,7 @@ function readLayout() {
       const entry = {};
       if (validRect(value)) for (const key of rectKeys) entry[key] = value[key];
       if (typeof value.hidden === 'boolean') entry.hidden = value.hidden;
+      if (typeof value.taskbar === 'boolean') entry.taskbar = value.taskbar;
       if (typeof value.zoomed === 'boolean') entry.zoomed = value.zoomed;
       if (['compact', 'auto', 'manual'].includes(value.sizeMode)) entry.sizeMode = value.sizeMode;
       if (Number.isSafeInteger(value.observerIndex) && value.observerIndex >= 0 && value.observerIndex < 32) entry.observerIndex = value.observerIndex;
@@ -131,8 +132,10 @@ export class DesktopWindows {
     const legacyDefaults = this.legacyDefaultRect(kind, index);
     const legacyCustom = validRect(saved) && ![defaults, legacyDefaults].some(rect =>
       rectKeys.every((key) => Math.abs(saved[key] - rect[key]) < .01));
+    const taskbar = saved?.taskbar !== false;
+    task.dataset.windowId = id; task.hidden = !taskbar;
     const win = { id, title, kind, element, task, titlebar, body: element.querySelector('.window-body'), index,
-      rect: { ...layoutRect }, layoutRect, minimized,
+      rect: { ...layoutRect }, layoutRect, minimized, taskbar,
       // Legacy zoomed=true cannot distinguish automatic from manual sizing.
       // Preserve it conservatively until Arrange or an explicit layout reset.
       sizeMode: saved?.sizeMode ?? ((saved?.zoomed ?? legacyCustom) ? 'manual' : 'compact'),
@@ -188,9 +191,16 @@ export class DesktopWindows {
     const win = this.windows.get(id); if (!win || win.title === String(title)) return;
     this.setTitle(win, title); this.changed();
   }
+  // The bottom bar only shows the windows the user keeps there; the Windows menu
+  // and the settings list still open every window.
+  setTaskbar(id, visible) {
+    const win = this.windows.get(id); if (!win) return false;
+    win.taskbar = Boolean(visible); win.task.hidden = !win.taskbar;
+    this.save(); return win.taskbar;
+  }
   list() {
     return [...this.windows.values()].map((win) => ({ id: win.id, title: win.title, kind: win.kind,
-      hidden: win.element.hidden, focused: !win.element.hidden && this.focused === win }));
+      hidden: win.element.hidden, taskbar: win.taskbar, focused: !win.element.hidden && this.focused === win }));
   }
   // Notifications carry a fresh list; subscribing does not immediately invoke the callback.
   onChange(callback) { this.listeners.add(callback); return () => this.listeners.delete(callback); }
@@ -355,7 +365,7 @@ export class DesktopWindows {
   save() {
     // Preserve not-yet-added utilities during startup; all live windows precede old entries.
     const saved = Object.create(null);
-    for (const win of this.windows.values()) saved[win.id] = { ...win.layoutRect, hidden: win.element.hidden, zoomed: win.zoomed, sizeMode: win.sizeMode,
+    for (const win of this.windows.values()) saved[win.id] = { ...win.layoutRect, hidden: win.element.hidden, taskbar: win.taskbar, zoomed: win.zoomed, sizeMode: win.sizeMode,
       ...(win.restore ? { restore: { ...win.restore }, restoreMode: win.restoreMode } : {}), ...(win.kind === 'delegated' ? { observerIndex: win.index } : {}) };
     for (const [id, entry] of Object.entries(this.saved)) {
       if (Object.keys(saved).length >= 256) break;

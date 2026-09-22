@@ -84,18 +84,21 @@ async function piDitherSmoke(stage) {
     $('[data-testid="background-theme-reset"]').click();
     check(localStorage.getItem('pi-desktop:theme:v1') === '#e58da5', 'default theme restored');
     $('[data-window-id="background"] button[aria-label="Close utility window"]').click();
-    // Window settings (top right): less frequent windows start hidden and the
-    // user chooses what stays in the menu; any window can be opened directly.
-    check($('[data-feature="workspace"]').hidden && $('[data-feature="providers"]').hidden && !$('[data-feature="usage"]').hidden, 'less frequent windows start out of the menu');
+    // Window settings (top right): they control the bottom bar. Less frequent
+    // windows start out of it, every window stays in the Windows menu, and the
+    // choice is remembered.
+    check($('#tasks button[data-window-id="workspace"]').hidden && $('#tasks button[data-window-id="providers"]').hidden && !$('#tasks button[data-window-id="usage"]').hidden, 'less frequent windows start out of the bottom bar');
+    check(!$('[data-feature="workspace"]').hidden, 'every window stays in the Windows menu');
     $('#settings').click();
     check($('#settings-dialog').open, 'settings dialog opens');
     const workspaceBox = $('[data-testid="settings-workspace"]');
     workspaceBox.checked = true; workspaceBox.dispatchEvent(new Event('change', { bubbles: true }));
-    check(!$('[data-feature="workspace"]').hidden, 'ticking adds the window to the menu');
+    check(!$('#tasks button[data-window-id="workspace"]').hidden, 'ticking adds its bottom button');
+    check(JSON.parse(localStorage.getItem('pi-desktop:taskbar:v1')).includes('workspace'), 'bottom-bar choice persists');
     workspaceBox.checked = false; workspaceBox.dispatchEvent(new Event('change', { bubbles: true }));
-    check($('[data-feature="workspace"]').hidden, 'unticking removes it again');
+    check($('#tasks button[data-window-id="workspace"]').hidden, 'unticking hides it again');
     $('[data-testid="settings-open-git"]').click();
-    check(!$('[data-window-id="git"]').hidden, 'settings opens a hidden window directly');
+    check(!$('[data-window-id="git"]').hidden, 'settings opens a bottom-bar-hidden window directly');
     $('[data-window-id="git"] button[aria-label="Close utility window"]').click();
     check($('[data-testid="providers-key"]').type === 'password' && !$('[data-testid="providers-key"]').value, 'empty credential control');
     check($('[data-testid="tools-tool-subagent"]')?.checked, 'extension selection reflected');

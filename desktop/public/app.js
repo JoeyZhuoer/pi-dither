@@ -405,31 +405,32 @@ const menu = $('#window-menu'), menuButton = $('#window-menu-toggle');
 function closeMenu() { menu.hidden = true; menuButton.setAttribute('aria-expanded', 'false'); }
 menuButton.addEventListener('click', () => { menu.hidden = !menu.hidden; menuButton.setAttribute('aria-expanded', String(!menu.hidden)); });
 for (const button of menu.querySelectorAll('[data-feature]')) button.addEventListener('click', () => { features.open(button.dataset.feature); closeMenu(); });
-// Window chooser: the less frequent windows live in Settings (top right) and the
-// user decides which ones stay in the Windows menu. The choice is remembered.
+// Window settings: the bottom bar only shows the windows the user keeps there.
+// Every window stays reachable from the Windows menu and from this list, and the
+// choice is remembered.
 const windowMenuButtons = [...menu.querySelectorAll('[data-feature]')];
-const WINDOW_CHOICES_KEY = 'pi-desktop:windows:v1';
-const COMMON_WINDOWS = ['activity', 'usage', 'sessions', 'tools', 'background'];
-function readWindowChoices() {
+const TASKBAR_KEY = 'pi-desktop:taskbar:v1';
+const COMMON_TASKBAR = ['activity', 'usage', 'sessions', 'tools', 'background'];
+function readTaskbarChoices() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(WINDOW_CHOICES_KEY) || 'null');
+    const parsed = JSON.parse(localStorage.getItem(TASKBAR_KEY) || 'null');
     if (Array.isArray(parsed)) return new Set(windowMenuButtons.map((button) => button.dataset.feature).filter((id) => parsed.includes(id)));
   } catch { /* Storage is optional. */ }
-  return new Set(COMMON_WINDOWS);
+  return new Set(COMMON_TASKBAR);
 }
-const windowChoices = readWindowChoices();
-function saveWindowChoices() {
-  for (const button of windowMenuButtons) button.hidden = !windowChoices.has(button.dataset.feature);
-  try { localStorage.setItem(WINDOW_CHOICES_KEY, JSON.stringify([...windowChoices])); } catch { /* Storage is optional. */ }
+const taskbarChoices = readTaskbarChoices();
+function saveTaskbarChoices() {
+  for (const button of windowMenuButtons) windows.setTaskbar(button.dataset.feature, taskbarChoices.has(button.dataset.feature));
+  try { localStorage.setItem(TASKBAR_KEY, JSON.stringify([...taskbarChoices])); } catch { /* Storage is optional. */ }
 }
 const settingsList = $('#settings-list');
 for (const button of windowMenuButtons) {
   const id = button.dataset.feature;
   const row = document.createElement('div'); row.className = 'settings-row';
   const label = document.createElement('label');
-  const box = document.createElement('input'); box.type = 'checkbox'; box.checked = windowChoices.has(id);
-  box.dataset.testid = `settings-${id}`;
-  box.addEventListener('change', () => { if (box.checked) windowChoices.add(id); else windowChoices.delete(id); saveWindowChoices(); });
+  const box = document.createElement('input'); box.type = 'checkbox'; box.checked = taskbarChoices.has(id);
+  box.dataset.testid = `settings-${id}`; box.setAttribute('aria-label', `${button.textContent} in the bottom bar`);
+  box.addEventListener('change', () => { if (box.checked) taskbarChoices.add(id); else taskbarChoices.delete(id); saveTaskbarChoices(); });
   const caption = document.createElement('span'); caption.textContent = button.textContent;
   label.append(box, caption);
   const open = document.createElement('button'); open.type = 'button'; open.textContent = 'Open';
@@ -437,7 +438,7 @@ for (const button of windowMenuButtons) {
   open.addEventListener('click', () => { $('#settings-dialog').close(); features.open(id); });
   row.append(label, open); settingsList.append(row);
 }
-saveWindowChoices();
+saveTaskbarChoices();
 $('#settings').addEventListener('click', () => { closeMenu(); $('#settings-dialog').showModal(); });
 document.addEventListener('pointerdown', (event) => { if (!menu.contains(event.target) && !menuButton.contains(event.target)) closeMenu(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) { closeMenu(); menuButton.focus(); } });

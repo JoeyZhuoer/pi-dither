@@ -189,16 +189,22 @@ const addUtility = (manager, id = 'models') => manager.add({ id, title: id.toUpp
 const button = (win, label) => win.element.querySelector('.titlebar-controls').children.find((node) => node.getAttribute('aria-label') === label);
 
 test('DesktopWindows utility contract, notifications, safe rename and non-destructive close', (t) => {
-  const { manager, doc } = fixture(t);
+  const f = fixture(t); const { manager, doc } = f;
   const main = addMain(manager); main.titlebar.focus();
   const changes = []; const unsubscribe = manager.onChange((list) => changes.push(list));
   let closes = 0;
   const utility = manager.add({ id: 'models', title: 'Models', kind: 'utility', hidden: true, onClose: () => closes++ });
   assert.equal(doc.activeElement, main.titlebar);
   assert.deepEqual(manager.list(), [
-    { id: 'main', title: 'Main', kind: 'main', hidden: false, focused: true },
-    { id: 'models', title: 'Models', kind: 'utility', hidden: true, focused: false },
+    { id: 'main', title: 'Main', kind: 'main', hidden: false, taskbar: true, focused: true },
+    { id: 'models', title: 'Models', kind: 'utility', hidden: true, taskbar: true, focused: false },
   ]);
+  assert.equal(utility.task.hidden, false);
+  manager.setTaskbar('models', false);
+  assert.equal(utility.task.hidden, true); assert.equal(manager.list()[1].taskbar, false);
+  assert.equal(f.stored.models.taskbar, false, 'taskbar visibility persists');
+  manager.setTaskbar('models', true); assert.equal(utility.task.hidden, false);
+  assert.equal(manager.setTaskbar('missing', false), false);
   assert.ok(utility.element.classList.contains('utility-window'));
   assert.equal(utility.element.classList.contains('sub-window'), false);
   assert.equal(manager.add({ id: 'models', title: 'Duplicate' }), utility);

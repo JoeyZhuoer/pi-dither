@@ -126,7 +126,14 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   const at = (maskToRead, x, y) => maskToRead[(y - region.y) * region.width + (x - region.x)];
   assert.equal(at(spread, 20, 20), 1, 'the exact centre stays put');
   // Each neighbour lands exactly where the radial spread puts it.
-  for (const [from, to] of [[[22, 20], [24, 20]], [[20, 23], [20, 27]], [[16, 16], [11, 11]]]) {
+  const landing = (px, py) => {
+    const dx = px + .5 - 20.5, dy = py + .5 - 20.5, distance = Math.hypot(dx, dy);
+    const scale = 1 + 1.2 * (1 - distance / RIPPLE_RADIUS);
+    return [Math.round(20.5 + dx * scale - .5), Math.round(20.5 + dy * scale - .5)];
+  };
+  for (const from of [[22, 20], [20, 23], [16, 16]]) {
+    const to = landing(...from);
+    assert.notDeepEqual(to, from, `dot ${from} moves`);
     assert.equal(at(spread, ...from), 0, `dot ${from} left its cell`);
     assert.equal(at(spread, ...to), 1, `dot ${from} landed at ${to}`);
     assert.ok(Math.hypot(to[0] + .5 - 20.5, to[1] + .5 - 20.5) > Math.hypot(from[0] + .5 - 20.5, from[1] + .5 - 20.5), `dot ${from} moved outward`);
@@ -146,5 +153,5 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   // Ripple cells never leak outside the region bounding box.
   assert.equal(spread.length, region.width * region.height);
   assert.deepEqual(rippleMask(base, width, rippleRegion(width, height, { x: 0, y: 0 }), { x: 0, y: 0, strength: 1 }).length, rippleRegion(width, height, { x: 0, y: 0 }).width * rippleRegion(width, height, { x: 0, y: 0 }).height);
-  assert.ok(RIPPLE_RADIUS > 0);
+  assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 80, `interaction radius stays small (${RIPPLE_RADIUS}px)`);
 });
