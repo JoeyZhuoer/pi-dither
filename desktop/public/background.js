@@ -1,19 +1,25 @@
-// Static, user-controlled background: a ground color with an optional photo
-// rendered as an ordered dither in the same ink as the rest of the desktop.
-// Nothing here runs on a timer; it repaints only when settings or the viewport
-// change. Exported helpers are pure so they can be tested without a browser.
+// User-controlled appearance: a theme (accent) colour, a ground colour and an
+// optional photo rendered as an ordered dither in the same ink as the rest of
+// the desktop. The base image is static; the only animation is the short
+// pointer ripple over the dots, which repaints just the affected region.
+// Exported helpers are pure so they can be tested without a browser.
+export const THEME_KEY = 'pi-desktop:theme:v1';
 export const GROUND_KEY = 'pi-desktop:ground:v1';
 export const PHOTO_KEY = 'pi-desktop:photo:v1';
+export const DEFAULT_THEME = '#e58da5';
 export const DEFAULT_GROUND = '#e58da5';
 export const INK = '#20201f';
 export const MAX_PHOTO_CHARS = 900_000;
+export const RIPPLE_RADIUS = 120;
+export const RIPPLE_SPREAD = 1.2;
+export const RIPPLE_MS = 520;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 // One cell per CSS pixel keeps the dither dots small and the photo precise; the
 // budget still bounds very large windows. Painting is a single static buffer.
 const CELL = 1;
 export const MAX_CELLS = 4_000_000, MAX_EDGE = 4096;
 
-export function normalizeGround(value) {
+export function normalizeColor(value) {
   const text = String(value ?? '').trim().toLowerCase();
   if (/^#[0-9a-f]{6}$/.test(text)) return text;
   const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(text);
@@ -47,41 +53,75 @@ const rgb = (hex) => {
   return match ? [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)] : [0, 0, 0];
 };
 
-// Ground fill plus optional ink pixels written as one ImageData buffer, so the
-// dither stays pixel-precise at full resolution instead of blocky rectangles.
-export function paintBackground(canvas, { ground, width, height, ink }) {
+// Ground fill plus ink pixels written as one ImageData buffer, so the dither
+// stays pixel-precise. `region` paints only that sub-rectangle (used by the
+// pointer ripple); `ink` is then region-sized, otherwise full-bitmap sized.
+export function paintBackground(canvas, { ground, width, height, ink, region }) {
   const ctx = canvas?.getContext?.('2d');
   if (!ctx || typeof ctx.createImageData !== 'function' || typeof ctx.putImageData !== 'function') return false;
   if (canvas.width !== width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
+  const area = region && region.width > 0 && region.height > 0 ? region : { x: 0, y: 0, width, height };
   const [groundRed, groundGreen, groundBlue] = rgb(ground), [inkRed, inkGreen, inkBlue] = rgb(INK);
-  const image = ctx.createImageData(width, height), data = image.data;
-  for (let index = 0, at = 0; index < width * height; index++, at += 4) {
+  const image = ctx.createImageData(area.width, area.height), data = image.data;
+  for (let index = 0, at = 0; index < area.width * area.height; index++, at += 4) {
     const useInk = ink && ink[index];
     data[at] = useInk ? inkRed : groundRed;
     data[at + 1] = useInk ? inkGreen : groundGreen;
     data[at + 2] = useInk ? inkBlue : groundBlue;
     data[at + 3] = 255;
   }
-  ctx.putImageData(image, 0, 0);
+  ctx.putImageData(image, area.x, area.y);
   return true;
 }
 
+// Bounding box of the dots a ripple can touch, with room for outward motion.
+export function rippleRegion(width, height, { x, y, radius = RIPPLE_RADIUS }) {
+  const reach = Math.ceil(radius * (1 + RIPPLE_SPREAD * .35)) + 2;
+  const x0 = Math.max(0, Math.floor(x - reach)), y0 = Math.max(0, Math.floor(y - reach));
+  const x1 = Math.min(width, Math.ceil(x + reach)), y1 = Math.min(height, Math.ceil(y + reach));
+  return { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) };
+}
+
+// Region-local mask for one ripple frame: dots inside the radius slide radially
+// outward (a local spread) and the area near the pointer clears; everything
+// else copies the base. `strength` in [0,1] fades back to the exact base.
+export function rippleMask(baseInk, width, region, { x, y, radius = RIPPLE_RADIUS, strength = 1 } = {}) {
+  const mask = new Uint8Array(region.width * region.height);
+  if (!baseInk || region.width <= 0 || region.height <= 0) return mask;
+  for (let row = 0; row < region.height; row++) for (let col = 0; col < region.width; col++) {
+    if (baseInk[(region.y + row) * width + region.x + col]) mask[row * region.width + col] = 1;
+  }
+  if (!(strength > 0)) return mask;
+  for (let row = 0; row < region.height; row++) for (let col = 0; col < region.width; col++) {
+    const px = region.x + col, py = region.y + row, source = py * width + px;
+    if (!baseInk[source]) continue;
+    const dx = px + .5 - x, dy = py + .5 - y, distance = Math.hypot(dx, dy);
+    if (distance >= radius) continue;
+    mask[row * region.width + col] = 0;
+    const scale = 1 + strength * RIPPLE_SPREAD * (1 - distance / radius);
+    const targetX = Math.round(x + dx * scale - .5), targetY = Math.round(y + dy * scale - .5);
+    if (targetX < region.x || targetY < region.y || targetX >= region.x + region.width || targetY >= region.y + region.height) continue;
+    mask[(targetY - region.y) * region.width + (targetX - region.x)] = 1;
+  }
+  return mask;
+}
+
 export function readBackground(storage) {
-  const state = { ground: DEFAULT_GROUND, photo: '' };
+  const state = { theme: DEFAULT_THEME, ground: DEFAULT_GROUND, photo: '' };
   try {
-    const ground = normalizeGround(storage?.getItem(GROUND_KEY));
-    if (ground) state.ground = ground;
+    state.theme = normalizeColor(storage?.getItem(THEME_KEY)) || DEFAULT_THEME;
+    state.ground = normalizeColor(storage?.getItem(GROUND_KEY)) || DEFAULT_GROUND;
     const photo = String(storage?.getItem(PHOTO_KEY) ?? '');
     if (/^data:image\/(?:png|jpeg|webp);base64,/.test(photo) && photo.length <= MAX_PHOTO_CHARS) state.photo = photo;
   } catch { /* Storage is optional; defaults are fine. */ }
   return state;
 }
 
-export function writeGround(storage, value) {
-  const ground = normalizeGround(value) || DEFAULT_GROUND;
-  try { storage?.setItem(GROUND_KEY, ground); } catch { /* Optional storage. */ }
-  return ground;
+export function writeColor(storage, key, value, fallback) {
+  const color = normalizeColor(value) || fallback;
+  try { storage?.setItem(key, color); } catch { /* Optional storage. */ }
+  return color;
 }
 
 export function writePhoto(storage, dataUrl) {
@@ -120,7 +160,8 @@ function encodeImage(image, maxEdge, quality, doc) {
 
 export function createBackground({ canvas, storage, document: doc = canvas?.ownerDocument ?? globalThis.document } = {}) {
   const state = readBackground(storage);
-  let image = null, resizeTimer = null, disposed = false;
+  let image = null, baseInk = null, bitmapWidth = 0, bitmapHeight = 0;
+  let resizeTimer = null, frame = null, lastFrame = 0, lastRegion = null, pointer = null, ripple = 0, disposed = false;
   const view = () => doc?.defaultView ?? globalThis;
   const size = () => backgroundSize(view()?.innerWidth ?? canvas?.clientWidth, view()?.innerHeight ?? canvas?.clientHeight);
 
@@ -140,11 +181,80 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
   function paint() {
     if (disposed) return;
     const { width, height } = size();
-    paintBackground(canvas, { ground: state.ground, width, height, ink: sample(width, height) });
+    bitmapWidth = width; bitmapHeight = height;
+    baseInk = sample(width, height);
+    lastRegion = null; ripple = 0; pointer = null;
+    paintBackground(canvas, { ground: state.ground, width, height, ink: baseInk });
   }
 
+  function regionMask(region, strength) {
+    return rippleMask(baseInk, bitmapWidth, region, { x: pointer.x, y: pointer.y, radius: RIPPLE_RADIUS, strength });
+  }
+
+  // Repaint the union of the previous and current ripple boxes so dragging the
+  // pointer leaves no trail.
+  function drawRipple(strength) {
+    if (!baseInk || !pointer) return;
+    const next = rippleRegion(bitmapWidth, bitmapHeight, { x: pointer.x, y: pointer.y });
+    let region = next;
+    if (lastRegion) {
+      const x0 = Math.min(lastRegion.x, next.x), y0 = Math.min(lastRegion.y, next.y);
+      const x1 = Math.max(lastRegion.x + lastRegion.width, next.x + next.width);
+      const y1 = Math.max(lastRegion.y + lastRegion.height, next.y + next.height);
+      region = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    }
+    paintBackground(canvas, { ground: state.ground, width: bitmapWidth, height: bitmapHeight, ink: regionMask(region, strength), region });
+    lastRegion = region;
+  }
+
+  function restoreRegion() {
+    if (!baseInk || !lastRegion) return;
+    paintBackground(canvas, { ground: state.ground, width: bitmapWidth, height: bitmapHeight, ink: regionMask(lastRegion, 0), region: lastRegion });
+    lastRegion = null;
+  }
+
+  const schedule = (callback) => (typeof view()?.requestAnimationFrame === 'function'
+    ? view().requestAnimationFrame(callback)
+    : setTimeout(() => callback(Date.now()), 33));
+  const unschedule = (id) => {
+    if (id == null) return;
+    if (typeof view()?.cancelAnimationFrame === 'function') view().cancelAnimationFrame(id);
+    else clearTimeout(id);
+  };
+
+  function step(now) {
+    frame = null;
+    if (disposed) return;
+    const current = Number.isFinite(now) ? now : Date.now();
+    const delta = Math.min(.1, Math.max(0, (current - lastFrame) / 1000));
+    lastFrame = current;
+    ripple = Math.max(0, ripple - delta * 1000 / RIPPLE_MS);
+    if (ripple > 0 && pointer) { drawRipple(ripple); frame = schedule(step); }
+    else { restoreRegion(); ripple = 0; }
+  }
+
+  function wake() {
+    if (frame != null || disposed) return;
+    lastFrame = Date.now();
+    frame = schedule(step);
+  }
+
+  const onPointerMove = (event) => {
+    if (disposed || !baseInk) return;
+    const x = Number(event?.clientX), y = Number(event?.clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    pointer = { x, y };
+    ripple = 1;
+    wake();
+  };
+  const onPointerLeave = () => { pointer = null; ripple = 0; };
+
   function repaint() {
-    try { doc?.documentElement?.style?.setProperty('--ground', state.ground); } catch { /* Optional DOM. */ }
+    try {
+      const style = doc?.documentElement?.style;
+      style?.setProperty('--pink', state.theme);
+      style?.setProperty('--ground', state.ground);
+    } catch { /* Optional DOM. */ }
     paint();
   }
 
@@ -153,11 +263,15 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
     resizeTimer = setTimeout(() => { resizeTimer = null; paint(); }, 150);
   };
   view()?.addEventListener?.('resize', onResize);
+  doc?.addEventListener?.('pointermove', onPointerMove, { passive: true });
+  doc?.addEventListener?.('pointerleave', onPointerLeave, { passive: true });
+  view()?.addEventListener?.('blur', onPointerLeave);
 
   const controller = {
     state,
     repaint,
-    setGround(value) { state.ground = writeGround(storage, value); repaint(); return state.ground; },
+    setTheme(value) { state.theme = writeColor(storage, THEME_KEY, value, DEFAULT_THEME); repaint(); return state.theme; },
+    setGround(value) { state.ground = writeColor(storage, GROUND_KEY, value, DEFAULT_GROUND); repaint(); return state.ground; },
     async setPhotoFile(file) {
       if (!file) return { ok: false, message: 'Choose an image first.' };
       const original = await decodeImage(await readFile(file, doc), doc);
@@ -181,7 +295,11 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
     destroy() {
       disposed = true;
       if (resizeTimer) clearTimeout(resizeTimer);
+      unschedule(frame); frame = null;
       view()?.removeEventListener?.('resize', onResize);
+      doc?.removeEventListener?.('pointermove', onPointerMove);
+      doc?.removeEventListener?.('pointerleave', onPointerLeave);
+      view()?.removeEventListener?.('blur', onPointerLeave);
     },
   };
   if (state.photo) void controller.setPhotoDataUrl(state.photo);

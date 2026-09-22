@@ -1,10 +1,10 @@
 import { syncCombobox } from './combobox.js';
-import { DEFAULT_GROUND } from './background.js';
+import { DEFAULT_GROUND, DEFAULT_THEME } from './background.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
   git: 'Git & worktrees', usage: 'Usage', sessions: 'Sessions', activity: 'Activity', tools: 'Tools',
-  background: 'Background & photo',
+  background: 'Appearance & photo',
 };
 const idle = (agent) => !!agent && ['idle', 'stopped', 'error'].includes(agent.phase);
 const number = (value) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : 'Unknown';
@@ -341,16 +341,22 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     choices(providerChoice, items.length ? items.map((item) => [item.id, item.name || item.id]) : [['', 'No configurable built-in providers']]); controls();
   }); refreshButton(providersPanel);
 
-  // Background: ground colour and a locally stored dithered photo. No requests
-  // and no timers; changes apply immediately and persist in this browser profile.
+  // Appearance: theme accent, ground colour and a locally stored dithered
+  // photo. No requests, no timers; changes apply immediately and persist.
   const backgroundPanel = panels.get('background');
-  backgroundPanel.content.append(node('p', 'The photo is downscaled, stored locally and dithered into the ground colour. Nothing is uploaded. Very large photos show until the app restarts.'));
+  backgroundPanel.content.append(node('p', 'The theme colour paints the desktop chrome; the ground colour fills the desk. The photo is downscaled, stored locally and dithered into the ground colour. Nothing is uploaded. Very large photos show until the app restarts.'));
   const backgroundForm = node('form', null, 'feature-form'); backgroundPanel.content.append(backgroundForm);
+  const themeInput = field(backgroundForm, 'Theme colour', 'background-theme', 'color');
   const groundInput = field(backgroundForm, 'Ground colour', 'background-ground', 'color');
   const photoInput = field(backgroundForm, 'Photo', 'background-photo', 'file');
   photoInput.accept = 'image/*';
   const usesBackground = () => !!background;
-  const groundDefault = button('Default colour', 'background-default', () => {
+  const themeDefault = button('Default theme', 'background-theme-reset', () => {
+    if (!background) return;
+    themeInput.value = background.setTheme(DEFAULT_THEME);
+    message(backgroundPanel, `Theme colour reset to ${DEFAULT_THEME}.`);
+  });
+  const groundDefault = button('Default ground', 'background-default', () => {
     if (!background) return;
     groundInput.value = background.setGround(DEFAULT_GROUND);
     message(backgroundPanel, `Ground colour reset to ${DEFAULT_GROUND}.`);
@@ -358,11 +364,12 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   const photoRemove = button('Remove photo', 'background-remove', () => {
     if (!background) return;
     background.clearPhoto(); photoInput.value = '';
-    message(backgroundPanel, 'Photo removed. The ground colour stays.');
+    message(backgroundPanel, 'Photo removed. The colours stay.');
   });
-  backgroundForm.append(groundDefault, photoRemove);
-  guard(groundInput, usesBackground); guard(photoInput, usesBackground);
-  guard(groundDefault, usesBackground); guard(photoRemove, usesBackground);
+  backgroundForm.append(themeDefault, groundDefault, photoRemove);
+  for (const element of [themeInput, groundInput, photoInput, themeDefault, groundDefault, photoRemove]) guard(element, usesBackground);
+  on(themeInput, 'input', () => { if (background) background.setTheme(themeInput.value); });
+  on(themeInput, 'change', () => { if (background) message(backgroundPanel, `Theme colour ${background.state.theme}.`); });
   on(groundInput, 'input', () => { if (background) background.setGround(groundInput.value); });
   on(groundInput, 'change', () => { if (background) message(backgroundPanel, `Ground colour ${background.state.ground}.`); });
   on(photoInput, 'change', () => {
@@ -375,7 +382,11 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
       if (!disposed) message(backgroundPanel, error.message || 'The photo could not be used.', true);
     }).finally(() => { photoInput.value = ''; });
   });
-  const renderBackground = () => { if (background) groundInput.value = background.state.ground; };
+  const renderBackground = () => {
+    if (!background) return;
+    themeInput.value = background.state.theme;
+    groundInput.value = background.state.ground;
+  };
 
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.
   const workspace = panels.get('workspace');

@@ -171,15 +171,20 @@ test('feature controller preserves drafts, targets selected agents, protects cre
   }
 });
 
-test('feature menu replaces manager with Tools and Help documents the plain background', async () => {
+test('feature menu, appearance window and window settings exist in the shell', async () => {
   const html = await readFile(new URL('../desktop/public/index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(html, /data-feature="windows"|Window manager|window management/);
   assert.match(html, /data-feature="tools"/);
-  assert.match(html, /data-feature="background">Background/);
+  assert.match(html, /data-feature="background">Appearance/);
+  assert.match(html, /id="settings" aria-haspopup="dialog"/);
+  assert.match(html, /id="settings-dialog"/);
+  assert.match(html, /id="settings-list"/);
+  assert.match(html, /data-testid not needed|/);
   assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
   assert.match(html, /id="background"/);
-  assert.match(html, /dithered photo in <strong>Windows \u2192 Background<\/strong>/);
+  assert.match(html, /The desktop chrome and ground colours are yours in <strong>Appearance<\/strong>/);
+  assert.match(html, /dithered photo/);
 });
 
 test('Tools drafts, authoritative Apply, guards, empty catalogs and stale responses (no provider)', async (t) => {

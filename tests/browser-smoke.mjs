@@ -137,9 +137,48 @@ try {
     assert.ok(dithered.ink > dithered.total * .15 && dithered.ink < dithered.total * .6, `photo dithers into ink (${dithered.ink}/${dithered.total})`);
     await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'removing the photo clears storage');
+    // Theme colour paints the chrome and persists separately from the ground.
+    await evaluate(`{ const input = document.querySelector('[data-testid="background-theme"]'); input.value = '#2a4b6c'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
+    assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--pink").trim()'), '#2a4b6c');
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#2a4b6c');
+    await evaluate(`document.querySelector('[data-testid="background-theme-reset"]').click()`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#e58da5', 'default theme is restored');
     await evaluate(`document.querySelector('[data-testid="background-default"]').click()`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:ground:v1")'), '#e58da5', 'default colour is restored');
     await evaluate(`document.querySelector('[data-window-id="background"] button[aria-label="Close utility window"]').click()`);
+  }
+
+  // Window settings (top right): less frequent windows start hidden and the user
+  // chooses what stays in the Windows menu; the choice is remembered.
+  assert.ok(await evaluate('!!document.querySelector("#settings") && !!document.querySelector("#settings-dialog") && !!document.querySelector("#settings-list")'), 'settings control exists');
+  assert.ok(await evaluate('document.querySelector("[data-feature=workspace]").hidden && document.querySelector("[data-feature=providers]").hidden && !document.querySelector("[data-feature=usage]").hidden'), 'less frequent windows start out of the menu');
+  await evaluate(`document.querySelector('#settings').click()`);
+  assert.equal(await evaluate('document.querySelector("#settings-dialog").open'), true, 'settings dialog opens');
+  assert.equal(await evaluate('document.querySelectorAll("#settings-list input[type=checkbox]").length'), 9, 'every window is listed in settings');
+  await evaluate(`{ const box = document.querySelector('[data-testid="settings-workspace"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#settings-dialog').close(); }`);
+  assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), false, 'ticking a window adds it to the menu');
+  assert.deepEqual(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:windows:v1")).sort()'), ['activity', 'background', 'sessions', 'tools', 'usage', 'workspace'], 'choice persists');
+  await until('document.querySelector("#settings-dialog").open === false');
+  await evaluate(`document.querySelector('#settings').click(); { const box = document.querySelector('[data-testid="settings-workspace"]'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#settings-dialog').close(); }`);
+  assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), true, 'unticking removes it again');
+  await evaluate(`document.querySelector('#settings').click(); document.querySelector('[data-testid="settings-open-git"]').click()`);
+  assert.equal(await evaluate('document.querySelector("[data-window-id=git]").hidden'), false, 'settings can open a hidden window directly');
+  await evaluate(`document.querySelector('[data-window-id=git] button[aria-label="Close utility window"]').click()`);
+
+  // Pointer ripple: with a photo in place the dots spread under the pointer and
+  // settle back exactly to the base pattern.
+  if (app) {
+    const canvasHash = `(() => { const c = document.querySelector('#background'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i], 16777619); return h; })()`;
+    await evaluate(`(async () => { const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); }); const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'ripple.png', { type: 'image/png' })); const input = document.querySelector('[data-testid="background-photo"]'); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
+    const basePattern = await evaluate(canvasHash);
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }))`);
+    await until(`${canvasHash} !== ${basePattern}`);
+    assert.notEqual(await evaluate(canvasHash), basePattern, 'the dots spread under the pointer');
+    await until(`${canvasHash} === ${basePattern}`);
+    assert.equal(await evaluate(canvasHash), basePattern, 'the dots settle back exactly');
+    await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'ripple fixture photo removed');
   }
   await evaluate('document.querySelector("#help").click(); document.querySelector("#help-dialog").close()');
   assert.equal(await evaluate('document.querySelectorAll(".sub-window").length'), 0, 'no child shell exists before an explicit launch or delegation');

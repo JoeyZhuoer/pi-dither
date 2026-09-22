@@ -64,11 +64,39 @@ async function piDitherSmoke(stage) {
     const canvas = $('#background'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let inkCount = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 32 && pixels[i + 1] === 32 && pixels[i + 2] === 31) inkCount++;
     check(inkCount > pixels.length / 4 * .15 && inkCount < pixels.length / 4 * .6, `photo dithers into ink (${inkCount})`);
+    check(!!$('[data-testid="background-theme"]'), 'theme control present');
+    const theme = $('[data-testid="background-theme"]');
+    theme.value = '#2a4b6c'; theme.dispatchEvent(new Event('input', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:theme:v1') === '#2a4b6c', 'theme colour persists');
+    check(getComputedStyle(document.documentElement).getPropertyValue('--pink').trim() === '#2a4b6c', 'theme colour applies to the chrome');
+    // Pointer ripple over the dithered dots: spread, then settle back exactly.
+    const canvasHash = () => { const c = $('#background'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i], 16777619); return hash; };
+    const basePattern = canvasHash();
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }));
+    await wait(() => canvasHash() !== basePattern);
+    check(canvasHash() !== basePattern, 'the dots spread under the pointer');
+    await wait(() => canvasHash() === basePattern);
+    check(canvasHash() === basePattern, 'the dots settle back exactly');
     $('[data-testid="background-remove"]').click();
     check(localStorage.getItem('pi-desktop:photo:v1') === null, 'photo removal clears storage');
     $('[data-testid="background-default"]').click();
     check(localStorage.getItem('pi-desktop:ground:v1') === '#e58da5', 'default ground restored');
+    $('[data-testid="background-theme-reset"]').click();
+    check(localStorage.getItem('pi-desktop:theme:v1') === '#e58da5', 'default theme restored');
     $('[data-window-id="background"] button[aria-label="Close utility window"]').click();
+    // Window settings (top right): less frequent windows start hidden and the
+    // user chooses what stays in the menu; any window can be opened directly.
+    check($('[data-feature="workspace"]').hidden && $('[data-feature="providers"]').hidden && !$('[data-feature="usage"]').hidden, 'less frequent windows start out of the menu');
+    $('#settings').click();
+    check($('#settings-dialog').open, 'settings dialog opens');
+    const workspaceBox = $('[data-testid="settings-workspace"]');
+    workspaceBox.checked = true; workspaceBox.dispatchEvent(new Event('change', { bubbles: true }));
+    check(!$('[data-feature="workspace"]').hidden, 'ticking adds the window to the menu');
+    workspaceBox.checked = false; workspaceBox.dispatchEvent(new Event('change', { bubbles: true }));
+    check($('[data-feature="workspace"]').hidden, 'unticking removes it again');
+    $('[data-testid="settings-open-git"]').click();
+    check(!$('[data-window-id="git"]').hidden, 'settings opens a hidden window directly');
+    $('[data-window-id="git"] button[aria-label="Close utility window"]').click();
     check($('[data-testid="providers-key"]').type === 'password' && !$('[data-testid="providers-key"]').value, 'empty credential control');
     check($('[data-testid="tools-tool-subagent"]')?.checked, 'extension selection reflected');
     $('#add-agent').click();
