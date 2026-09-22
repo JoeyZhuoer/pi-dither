@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  DEFAULT_GROUND, DEFAULT_THEME, GROUND_KEY, MAX_CELLS, MAX_EDGE, MAX_PHOTO_CHARS, PHOTO_KEY, RIPPLE_RADIUS, RIPPLE_SPREAD, THEME_KEY,
-  backgroundSize, ditherPhoto, normalizeColor, paintBackground, readBackground, removePhoto, rippleMask, rippleRegion, writeColor, writePhoto,
+  DEFAULT_GROUND, DEFAULT_THEME, GROUND_KEY, MAX_CELLS, MAX_EDGE, MAX_PHOTO_CHARS, PHOTO_KEY, RIPPLE_LINK, RIPPLE_LINK_GAP, RIPPLE_RADIUS, RIPPLE_SPREAD, RIPPLE_SWIRL, THEME_KEY,
+  backgroundSize, ditherPhoto, normalizeColor, paintBackground, readBackground, removePhoto, rippleLinks, rippleMask, rippleRegion, writeColor, writePhoto,
 } from '../desktop/public/background.js';
 
 function fakeStorage(initial = {}, deny = false) {
@@ -128,8 +128,11 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   // Each neighbour lands exactly where the radial spread puts it.
   const landing = (px, py) => {
     const dx = px + .5 - 20.5, dy = py + .5 - 20.5, distance = Math.hypot(dx, dy);
-    const scale = 1 + RIPPLE_SPREAD * (1 - distance / RIPPLE_RADIUS);
-    return [Math.round(20.5 + dx * scale - .5), Math.round(20.5 + dy * scale - .5)];
+    const falloff = 1 - distance / RIPPLE_RADIUS;
+    const angle = RIPPLE_SWIRL * falloff;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const scale = 1 + RIPPLE_SPREAD * falloff;
+    return [Math.round(20.5 + (dx * cos - dy * sin) * scale - .5), Math.round(20.5 + (dx * sin + dy * cos) * scale - .5)];
   };
   for (const from of [[22, 20], [20, 23], [16, 16]]) {
     const to = landing(...from);
@@ -156,4 +159,29 @@ test('pointer ripples spread dots outward and fade back to the exact base', () =
   assert.equal(spread.length, region.width * region.height);
   assert.deepEqual(rippleMask(base, width, rippleRegion(width, height, { x: 0, y: 0 }), { x: 0, y: 0, strength: 1 }).length, rippleRegion(width, height, { x: 0, y: 0 }).width * rippleRegion(width, height, { x: 0, y: 0 }).height);
   assert.ok(RIPPLE_RADIUS > 0 && RIPPLE_RADIUS <= 10, `interaction radius stays tiny (${RIPPLE_RADIUS}px)`);
+});
+
+test('pointer links fan out to distinct nearby dots like the reference field', () => {
+  const width = 80, height = 80, mask = blank(width, height);
+  // A dense 2px grid plus one isolated dot: spacing must keep the fan readable.
+  for (let y = 30; y < 50; y += 2) for (let x = 30; x < 50; x += 2) dot(mask, width, x, y);
+  dot(mask, width, 40, 12);
+  const region = { x: 0, y: 0, width, height };
+  const links = rippleLinks(mask, width, region, { x: 40.5, y: 40.5 });
+  assert.ok(links.length > 0 && links.length <= 14, `a bounded fan of links (${links.length})`);
+  assert.ok(links.every((link) => link[0] === 40.5 && link[1] === 40.5), 'all links start at the pointer');
+  assert.ok(links.every((link) => Math.hypot(link[2] - 40.5, link[3] - 40.5) <= RIPPLE_LINK), 'links stay inside the radius');
+  assert.ok(links.every((link) => link[4] > 0 && link[4] <= .32), 'alpha fades with distance');
+  for (let i = 0; i < links.length; i++) for (let j = i + 1; j < links.length; j++) {
+    assert.ok(Math.hypot(links[i][2] - links[j][2], links[i][3] - links[j][3]) >= RIPPLE_LINK_GAP, 'kept dots are spaced apart');
+  }
+  assert.deepEqual(rippleLinks(mask, width, region, { x: 40.5, y: 40.5 }), links, 'deterministic');
+  assert.deepEqual(rippleLinks(mask, width, region, { x: 400, y: 400 }), [], 'nothing to link far away');
+  // Blending a link into the painted region darkens the ground along the line.
+  const { canvas, paints } = frame();
+  paintBackground(canvas, { ground: '#ffffff', width: 8, height: 8, ink: blank(8, 8), links: [[0, 0, 7, 7, .3]] });
+  const image = paints[0].image;
+  const line = pixel(image, 0, 0), ground = pixel(image, 7, 0);
+  assert.ok(line[0] < ground[0], `the linked pixel is darker (${line[0]} < ${ground[0]})`);
+  assert.equal(line[3], 255, 'links stay opaque');
 });

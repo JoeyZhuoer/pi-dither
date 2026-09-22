@@ -12,6 +12,10 @@ export const INK = '#20201f';
 export const MAX_PHOTO_CHARS = 900_000;
 export const RIPPLE_RADIUS = 10;
 export const RIPPLE_SPREAD = 1.6;
+export const RIPPLE_SWIRL = .45;
+export const RIPPLE_LINK = 40;
+export const RIPPLE_LINKS = 14;
+export const RIPPLE_LINK_GAP = 7;
 export const RIPPLE_MS = 520;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 // One cell per CSS pixel keeps the dither dots small and the photo precise; the
@@ -56,7 +60,7 @@ const rgb = (hex) => {
 // Ground fill plus ink pixels written as one ImageData buffer, so the dither
 // stays pixel-precise. `region` paints only that sub-rectangle (used by the
 // pointer ripple); `ink` is then region-sized, otherwise full-bitmap sized.
-export function paintBackground(canvas, { ground, width, height, ink, region }) {
+export function paintBackground(canvas, { ground, width, height, ink, region, links }) {
   const ctx = canvas?.getContext?.('2d');
   if (!ctx || typeof ctx.createImageData !== 'function' || typeof ctx.putImageData !== 'function') return false;
   if (canvas.width !== width) canvas.width = width;
@@ -71,6 +75,10 @@ export function paintBackground(canvas, { ground, width, height, ink, region }) 
     data[at + 2] = useInk ? inkBlue : groundBlue;
     data[at + 3] = 255;
   }
+  if (links) for (const [fromX, fromY, toX, toY, alpha] of links) {
+    const strength = Math.max(0, Math.min(1, Number(alpha) || 0));
+    if (strength > 0) blendLine(data, area, fromX, fromY, toX, toY, inkRed, inkGreen, inkBlue, strength);
+  }
   ctx.putImageData(image, area.x, area.y);
   return true;
 }
@@ -83,9 +91,9 @@ export function rippleRegion(width, height, { x, y, radius = RIPPLE_RADIUS }) {
   return { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) };
 }
 
-// Region-local mask for one ripple frame: dots inside the radius slide radially
-// outward (a local spread) and the area near the pointer clears; everything
-// else copies the base. `strength` in [0,1] fades back to the exact base.
+// Region-local mask for one ripple frame: dots inside the radius slide outward
+// and swirl around the pointer, so the field stirs like the site's particles;
+// everything else copies the base. `strength` in [0,1] fades back exactly.
 export function rippleMask(baseInk, width, region, { x, y, radius = RIPPLE_RADIUS, strength = 1 } = {}) {
   const mask = new Uint8Array(region.width * region.height);
   if (!baseInk || region.width <= 0 || region.height <= 0) return mask;
@@ -99,12 +107,60 @@ export function rippleMask(baseInk, width, region, { x, y, radius = RIPPLE_RADIU
     const dx = px + .5 - x, dy = py + .5 - y, distance = Math.hypot(dx, dy);
     if (distance >= radius) continue;
     mask[row * region.width + col] = 0;
-    const scale = 1 + strength * RIPPLE_SPREAD * (1 - distance / radius);
-    const targetX = Math.round(x + dx * scale - .5), targetY = Math.round(y + dy * scale - .5);
+    const falloff = 1 - distance / radius;
+    const angle = strength * RIPPLE_SWIRL * falloff;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const rotatedX = dx * cos - dy * sin, rotatedY = dx * sin + dy * cos;
+    const scale = 1 + strength * RIPPLE_SPREAD * falloff;
+    const targetX = Math.round(x + rotatedX * scale - .5), targetY = Math.round(y + rotatedY * scale - .5);
     if (targetX < region.x || targetY < region.y || targetX >= region.x + region.width || targetY >= region.y + region.height) continue;
     mask[(targetY - region.y) * region.width + (targetX - region.x)] = 1;
   }
   return mask;
+}
+
+// Faint pointer links in the site's constellation style: the nearest inked
+// dots around the cursor, spaced apart so the lines fan out instead of piling
+// on one dense patch. Returned as [fromX, fromY, toX, toY, alpha] segments.
+export function rippleLinks(baseInk, width, region, { x, y, radius = RIPPLE_LINK, limit = RIPPLE_LINKS, spacing = RIPPLE_LINK_GAP } = {}) {
+  if (!baseInk || !(radius > 0)) return [];
+  const candidates = [];
+  for (let row = 0; row < region.height; row++) for (let col = 0; col < region.width; col++) {
+    const px = region.x + col, py = region.y + row;
+    if (!baseInk[py * width + px]) continue;
+    const distance = Math.hypot(px + .5 - x, py + .5 - y);
+    if (distance <= radius) candidates.push({ x: px + .5, y: py + .5, distance });
+  }
+  candidates.sort((left, right) => left.distance - right.distance);
+  const kept = [];
+  for (const dot of candidates) {
+    if (kept.length >= Math.max(1, limit)) break;
+    if (kept.some((other) => Math.hypot(other.x - dot.x, other.y - dot.y) < spacing)) continue;
+    kept.push(dot);
+  }
+  return kept.map((dot) => [x, y, dot.x, dot.y, .32 * (1 - dot.distance / radius)]);
+}
+
+// Blends one 1px segment into an already-filled region buffer.
+function blendLine(data, area, x0, y0, x1, y1, red, green, blue, alpha) {
+  let x = Math.round(x0), y = Math.round(y0);
+  const endX = Math.round(x1), endY = Math.round(y1);
+  const spanX = Math.abs(endX - x), spanY = Math.abs(endY - y);
+  const stepX = x < endX ? 1 : -1, stepY = y < endY ? 1 : -1;
+  let error = spanX - spanY;
+  for (;;) {
+    const localX = x - area.x, localY = y - area.y;
+    if (localX >= 0 && localY >= 0 && localX < area.width && localY < area.height) {
+      const at = (localY * area.width + localX) * 4;
+      data[at] = data[at] * (1 - alpha) + red * alpha;
+      data[at + 1] = data[at + 1] * (1 - alpha) + green * alpha;
+      data[at + 2] = data[at + 2] * (1 - alpha) + blue * alpha;
+    }
+    if (x === endX && y === endY) break;
+    const doubled = 2 * error;
+    if (doubled > -spanY) { error -= spanY; x += stepX; }
+    if (doubled < spanX) { error += spanX; y += stepY; }
+  }
 }
 
 export function readBackground(storage) {
@@ -203,7 +259,10 @@ export function createBackground({ canvas, storage, document: doc = canvas?.owne
       const y1 = Math.max(lastRegion.y + lastRegion.height, next.y + next.height);
       region = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
     }
-    paintBackground(canvas, { ground: state.ground, width: bitmapWidth, height: bitmapHeight, ink: regionMask(region, strength), region });
+    const links = strength > .1
+      ? rippleLinks(baseInk, bitmapWidth, region, { x: pointer.x, y: pointer.y }).map((link) => [...link.slice(0, 4), link[4] * strength])
+      : null;
+    paintBackground(canvas, { ground: state.ground, width: bitmapWidth, height: bitmapHeight, ink: regionMask(region, strength), region, links });
     lastRegion = region;
   }
 
