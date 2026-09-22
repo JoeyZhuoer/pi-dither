@@ -379,6 +379,23 @@ test('activity patterns are deterministic and spatially distinct in the same pal
   }
 });
 
+test('generated text seeds a traveling dither wave, and idle ignores the signal', () => {
+  const f = fixture();
+  const frameAt = (time, mode, shape = 0, progress = 0) => { drawBackdrop(f.canvas, time, mode, shape, progress); return f.frames.at(-1); };
+  const fraction = (before, after) => changedCells(before, after) / (before.width * before.height);
+  // Identical inputs are deterministic; different generated text reshapes the wave.
+  assert.deepEqual(frameAt(6, 'thinking', 0x11112222), frameAt(6, 'thinking', 0x11112222));
+  assert.ok(fraction(frameAt(6, 'thinking', 0x11112222), frameAt(6, 'thinking', 0x77773333)) > .01, 'different generated text reshapes the wave');
+  // Wave shape matters on both busy modes.
+  assert.ok(fraction(frameAt(6, 'output', 0x11112222), frameAt(6, 'output', 0x77773333)) > .01, 'output waves are seeded too');
+  // More text arriving advances the wave even at the same animation time.
+  assert.ok(fraction(frameAt(6, 'output', 0x2468ace0, 0), frameAt(6, 'output', 0x2468ace0, 240)) > .01, 'arriving text advances the wave');
+  // The seeded wave travels with animation time as well.
+  assert.ok(fraction(frameAt(0, 'thinking', 0x2468ace0), frameAt(2, 'thinking', 0x2468ace0)) > .02, 'the wave moves along its path');
+  // Idle keeps the original pixels no matter what signal arrives.
+  assert.deepEqual(frameAt(9, 'idle'), frameAt(9, 'idle', 0xffffffff, 9999), 'idle ignores the generated-text signal');
+});
+
 test('idle shimmers in place while busy fields drift smoothly with small per-frame changes', () => {
   const f = fixture();
   const frameAt = (time, mode) => { drawBackdrop(f.canvas, time, mode); return f.frames.at(-1); };
@@ -427,6 +444,7 @@ test('idle shimmers in place while busy fields drift smoothly with small per-fra
 
 test('activity transitions coalesce, normalize invalid modes and never schedule extra work', () => {
   const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
+  controller.setSignal(0x1234abcd, 512);
   let ticks = 0;
   for (const mode of ['thinking', 'output', 'idle', 'bogus', 'output']) {
     const count = f.frames.length;
@@ -435,12 +453,30 @@ test('activity transitions coalesce, normalize invalid modes and never schedule 
     assert.equal(f.timers.size, 1);
     f.advance(1000 / 12);
     ticks++;
-    drawBackdrop(reference.canvas, ticks / 12, mode);
+    drawBackdrop(reference.canvas, ticks / 12, mode, 0x1234abcd, 512);
     assert.deepEqual(f.frames.at(-1), reference.frames.at(-1));
   }
   assert.equal(f.maxTimers, 1);
   controller.destroy(); controller.setActivity('thinking');
   assertDisposed(f);
+});
+
+test('generated-text signal updates coalesce, normalize invalid input and stay inert while stopped', () => {
+  const f = fixture(), reference = fixture(), controller = startBackdrop(f.canvas);
+  const count = f.frames.length;
+  for (let i = 0; i < 20; i++) controller.setSignal(i % 2 ? 0xabcdef01 : NaN, i % 2 ? 300 : -1);
+  assert.equal(f.frames.length, count, 'signal changes never draw outside the cadence');
+  assert.equal(f.timers.size, 1);
+  for (let i = 0; i < 5; i++) controller.setSignal(undefined, undefined);
+  f.advance(1000 / 12);
+  drawBackdrop(reference.canvas, 1 / 12, 'idle', 0, 0);
+  assert.deepEqual(f.frames.at(-1), reference.frames.at(-1), 'invalid signal input returns to the original field');
+  controller.setPaused(true);
+  const paused = f.frames.length;
+  controller.setSignal(0x12345678, 999);
+  f.advance(5000);
+  assert.equal(f.frames.length, paused, 'a stopped background does not react to the signal');
+  controller.destroy(); assertDisposed(f);
 });
 
 for (const stop of ['manual', 'hidden', 'reduced']) {

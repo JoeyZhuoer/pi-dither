@@ -50,7 +50,21 @@ function softThreshold(sx, sy) {
   return (top + (bottom - top) * fy) / 16;
 }
 
-export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
+// The generated text seeds a dither wave: direction, wavelength, travel speed
+// and ripple all come from a local fingerprint of that text, and the wave also
+// advances as more text arrives. Each generation therefore shapes the
+// background differently.
+function waveFrom(shape) {
+  const s = shape >>> 0;
+  const angle = (s & 0xff) / 255 * Math.PI * 2;
+  const frequency = .07 + ((s >>> 8) & 0xff) / 255 * .26;
+  return { x: Math.cos(angle) * frequency, y: Math.sin(angle) * frequency,
+    speed: .7 + ((s >>> 16) & 0xff) / 255 * 1.6,
+    ripple: .25 + ((s >>> 24) & 0x0f) / 15 * 1.05,
+    phase: ((s >>> 28) & 0x0f) / 16 * Math.PI * 2 };
+}
+
+export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle', shape = 0, progress = 0) {
   const ctx = contextFor(canvas);
   if (!ctx) return;
   const browser = browserFor(canvas);
@@ -71,20 +85,34 @@ export function drawBackdrop(canvas, timeSeconds = 0, activity = 'idle') {
   const driftX = mode === 'idle' ? Math.sin(time * .13) * .035 : 0;
   const driftY = mode === 'idle' ? Math.sin(time * .11) * .025 : 0;
   const flow = flowOffset(mode, time, width, height);
+  // The seeded wave and its text progress only exist while the model is busy;
+  // idle keeps the original field, threshold and shimmer untouched.
+  const ditherWave = flow ? waveFrom(Number.isFinite(shape) ? shape : 0) : null;
+  const arrived = Number.isFinite(progress) && progress > 0 ? progress : 0;
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const sx = flow ? x + flow.x : x, sy = flow ? y + flow.y : y;
     const u = sx / width, v = sy / height;
     const a = Math.exp(-(((u + .04 - driftX) / .25) ** 2 + ((v - 1.02 - driftY) / .31) ** 2));
     const b = Math.exp(-(((u - .52 + driftX) / .19) ** 2 + ((v - 1.05 + driftY) / .22) ** 2));
     const c = Math.exp(-(((u - 1.01 - driftY) / .20) ** 2 + ((v - .55 - driftX) / .23) ** 2));
-    // Idle keeps the original slow band arithmetic. Busy band shapes are
-    // static and ride the translation above, so they flow with the field.
+    // Idle keeps the original slow band arithmetic. Busy bands keep the same
+    // random-like vibration as idle and ride the translation above.
     const phase = mode === 'thinking'
-      ? sx * .25 + sy * .19 + Math.sin(sy * .055) * 13
-      : mode === 'output' ? sy * .34 + sx * .07 + Math.sin(sx * .035) * 3
+      ? sx * .25 + sy * .19 + Math.sin(sy * .055 - time * .3) * 9
+      : mode === 'output' ? sy * .34 + sx * .07 + Math.sin(sx * .035 + time * .45) * 3
         : x * .41 + y * .27 + time * .24 + Math.sin(y * .073 + time * .09) * 9;
-    const wave = .65 + .35 * Math.sin(phase);
-    const density = Math.max(a, b, c) * wave * .88;
+    const band = .65 + .35 * Math.sin(phase);
+    let density = Math.max(a, b, c) * band * .88;
+    if (ditherWave) {
+      // A traveling dither wave: it moves along its seeded direction, ripples,
+      // and is nudged forward by the text being generated.
+      const along = (sx - width / 2) * ditherWave.x + (sy - height / 2) * ditherWave.y
+        - time * ditherWave.speed - arrived * .05 + ditherWave.phase;
+      const cross = (sx * -ditherWave.y + sy * ditherWave.x) * 2.7 + time * .9;
+      const crest = .5 + .5 * Math.sin(along + Math.sin(cross) * (1.5 + ditherWave.ripple * 4));
+      const vibrate = .84 + .16 * Math.sin(time * 2.6 + along * .4);
+      density = density * (.36 + 1.28 * crest) * vibrate;
+    }
     const threshold = flow ? softThreshold(sx, sy) : BAYER[(y % 4) * 4 + x % 4] / 16;
     if (density > threshold + .06) ctx.fillRect(x, y, 1, 1);
     else if (x % 3 === 0 && y % 3 === 0) ctx.fillRect(x, y, .45, .45);
@@ -99,7 +127,7 @@ export function startBackdrop(canvas, { paused = false, onStateChange } = {}) {
   const media = browser?.matchMedia?.('(prefers-reduced-motion: reduce)');
   const canRun = !!(contextFor(canvas) && browser?.setTimeout && browser?.clearTimeout);
   const cleanups = [];
-  let manualPause = Boolean(paused), disposed = false, pageHidden = false, activity = 'idle';
+  let manualPause = Boolean(paused), disposed = false, pageHidden = false, activity = 'idle', shape = 0, progress = 0;
   let timer = null, running = false, time = 0, lastTick = 0, previousState;
   const now = () => browser?.performance?.now?.() ?? Date.now();
   const hidden = () => Boolean(document?.hidden || pageHidden);
@@ -119,7 +147,7 @@ export function startBackdrop(canvas, { paused = false, onStateChange } = {}) {
     // Freeze animation time while stopped, and avoid a jump after a long main-thread stall.
     time += Math.min(.25, Math.max(0, (current - lastTick) / 1000));
     lastTick = current;
-    drawBackdrop(canvas, time, activity);
+    drawBackdrop(canvas, time, activity, shape, progress);
     timer = browser.setTimeout(tick, FRAME_MS);
   }
 
@@ -147,7 +175,7 @@ export function startBackdrop(canvas, { paused = false, onStateChange } = {}) {
   function resize() {
     // Running frames pick up size changes at the capped cadence. A stopped, visible
     // background may repaint once for layout, but never starts an animation timer.
-    if (!disposed && !running && !hidden()) drawBackdrop(canvas, time, activity);
+    if (!disposed && !running && !hidden()) drawBackdrop(canvas, time, activity, shape, progress);
   }
   listen(browser, 'resize', resize);
   listen(document, 'visibilitychange', () => { resize(); reconcile(); });
@@ -166,6 +194,13 @@ export function startBackdrop(canvas, { paused = false, onStateChange } = {}) {
       // do not draw or advance time; a later frame/layout repaint uses the latest.
       activity = activityMode(value);
     },
+    // Local fingerprint of the generated text (shape) and how much has arrived
+    // (progress). Neither is stored or sent anywhere; they only steer the wave.
+    setSignal(nextShape = 0, nextProgress = 0) {
+      if (disposed) return;
+      shape = Number.isFinite(nextShape) ? nextShape >>> 0 : 0;
+      progress = Number.isFinite(nextProgress) && nextProgress > 0 ? nextProgress : 0;
+    },
     setPaused(value) {
       if (disposed) return;
       manualPause = Boolean(value);
@@ -180,7 +215,7 @@ export function startBackdrop(canvas, { paused = false, onStateChange } = {}) {
     },
   };
   if (canvas && typeof canvas === 'object') controllers.set(canvas, controller);
-  if (!hidden()) drawBackdrop(canvas, time, activity);
+  if (!hidden()) drawBackdrop(canvas, time, activity, shape, progress);
   reconcile();
   return controller;
 }

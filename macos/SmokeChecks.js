@@ -22,6 +22,7 @@ async function piDitherSmoke(stage) {
     check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');
     check(saved().main.sizeMode === 'auto' && width() === 610, 'main opens at the minimum width');
     check($('#backdrop').dataset.activity === 'idle', 'background reports idle activity while the model is stopped');
+    check($('#backdrop').dataset.signal === '0' && $('#backdrop').dataset.progress === '0', 'no generated text means no seeded dither wave');
     check($('#backdrop').dataset.running === String($('#background-motion').getAttribute('aria-pressed') !== 'true'), 'animation follows the motion preference');
     if (window.piDitherLayoutResetOK) {
       check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained', 'unrelated storage retained');
