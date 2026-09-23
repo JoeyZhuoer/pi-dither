@@ -7,3 +7,5 @@ coverage/
 .env
 .env.*
 !.env.example
+# Local development handoff for the operator; never published.
+docs/handoff.md
