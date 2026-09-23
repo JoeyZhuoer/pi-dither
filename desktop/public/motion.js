@@ -24,12 +24,22 @@ export const MOTION_LAG = 90;
 // Peak radial speed in px/s at a full shake. The impulse decays over ~0.4 s, so a
 // full shake throws every point about MOTION_SHAKE / MOTION_SHAKE_DECAY px out.
 export const MOTION_SHAKE = 34;
-export const MOTION_SHAKE_THRESHOLD = .18;
+// Lowered from .18 g after the motion feel review: gentle bumps now start a
+// visible burst instead of having to hit the machine noticeably.
+export const MOTION_SHAKE_THRESHOLD = .12;
 export const MOTION_SHAKE_DECAY = 2.4;
 // Linear acceleration in g that means a full shake, on top of the threshold.
 export const MOTION_SHAKE_FULL = .9;
 export const MOTION_GRAVITY_ALPHA = .12;
 export const MOTION_LINEAR_ALPHA = .3;
+// Gyroscope (deg/s): a sharp angular jolt adds to the shake in full mode.
+// There is deliberately no gyro-driven cloud rotation: the twist cost a full
+// per-point target rotation on every frame and was removed after the motion
+// performance review.
+export const MOTION_GYRO_ALPHA = .3;
+// Lowered from 22 deg/s for the same reason: a light twist starts the shake.
+export const MOTION_GYRO_SHAKE_THRESHOLD = 14;
+export const MOTION_GYRO_SHAKE_FULL = 260;
 // A sway below these is treated as still, so the render loop can park.
 export const MOTION_SETTLE = .05;
 // Device axes -> screen axes, the one place a sensor orientation can be corrected.
@@ -119,12 +129,27 @@ export function motionInput(sample, state = {}) {
   const delta = { x: down.x - baseline.x, y: down.y - baseline.y, z: down.z - baseline.z };
   const tilt = cloudAxes(pick(delta, MOTION_AXES.right) * MOTION_SWING, pick(delta, MOTION_AXES.front) * MOTION_SWING);
   const lag = cloudAxes(-pick(smoothed, MOTION_AXES.right) * MOTION_LAG, -pick(smoothed, MOTION_AXES.front) * MOTION_LAG);
+  // Gyro samples are optional: the native host adds gx/gy/gz (deg/s) when the
+  // gyroscope opened. They add an angular shake term only.
+  const gx = Number(sample?.gx), gy = Number(sample?.gy), gz = Number(sample?.gz);
+  const hasGyro = [gx, gy, gz].some(Number.isFinite);
+  const rawGyro = { x: Number.isFinite(gx) ? gx : 0, y: Number.isFinite(gy) ? gy : 0, z: Number.isFinite(gz) ? gz : 0 };
+  let gyro = state.gyro ?? null;
+  if (hasGyro) {
+    const weightGyro = Math.min(1, Math.max(0, MOTION_GYRO_ALPHA));
+    gyro = gyro ? { x: gyro.x + (rawGyro.x - gyro.x) * weightGyro, y: gyro.y + (rawGyro.y - gyro.y) * weightGyro, z: gyro.z + (rawGyro.z - gyro.z) * weightGyro } : rawGyro;
+  }
   // A shake is read from the *unsmoothed* residual, so a knock is never delayed by
-  // the lag filter; the host's own peak catches spikes between deliveries.
+  // the lag filter; the host's own peak catches spikes between deliveries. A
+  // sharp angular jolt contributes too, so an angular knock also bursts the cloud.
   const magnitude = Math.max(Math.hypot(linear.x, linear.y, linear.z), Math.abs(Number(sample?.peak) || 0));
   const span = Math.max(.01, MOTION_SHAKE_FULL - MOTION_SHAKE_THRESHOLD);
-  const shake = magnitude <= MOTION_SHAKE_THRESHOLD ? 0 : Math.min(1, (magnitude - MOTION_SHAKE_THRESHOLD) / span);
-  return { tiltX: tilt.x, tiltY: tilt.y, lagX: lag.x, lagY: lag.y, shake, gravity, linear: smoothed, magnitude };
+  const linearShake = magnitude <= MOTION_SHAKE_THRESHOLD ? 0 : Math.min(1, (magnitude - MOTION_SHAKE_THRESHOLD) / span);
+  const angular = gyro ? Math.hypot(gyro.x, gyro.y, gyro.z) : 0;
+  const angularSpan = Math.max(.01, MOTION_GYRO_SHAKE_FULL - MOTION_GYRO_SHAKE_THRESHOLD);
+  const angularShake = angular <= MOTION_GYRO_SHAKE_THRESHOLD ? 0 : Math.min(1, (angular - MOTION_GYRO_SHAKE_THRESHOLD) / angularSpan);
+  const shake = Math.max(linearShake, angularShake);
+  return { tiltX: tilt.x, tiltY: tilt.y, lagX: lag.x, lagY: lag.y, shake, gravity, linear: smoothed, gyro, magnitude };
 }
 
 // Where the spring is being pulled: the lean plus the lag, in cloud pixels.
@@ -164,7 +189,7 @@ export function createMotion({ provider, storage, document: doc = globalThis.doc
   let mode = readMotion(storage);
   let source = 'none', status = 'none';
   let release = null, webHandler = null, rateWindow = null;
-  const state = { x: 0, y: 0, vx: 0, vy: 0, shake: 0, gravity: null, linear: null, baseline: null, input: null, lastAt: 0, count: 0, rate: 0 };
+  const state = { x: 0, y: 0, vx: 0, vy: 0, shake: 0, gravity: null, linear: null, gyro: null, baseline: null, input: null, lastAt: 0, count: 0, rate: 0 };
 
   function hostProvider() {
     if (provider && typeof provider.subscribe === 'function') return provider;
@@ -220,6 +245,7 @@ export function createMotion({ provider, storage, document: doc = globalThis.doc
     const input = motionInput(sample, state);
     state.gravity = input.gravity;
     state.linear = input.linear;
+    state.gyro = input.gyro;
     state.input = input;
     state.last = sample;
     // The first sample after enabling becomes level, so switching motion on never

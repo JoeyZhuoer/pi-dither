@@ -18,7 +18,7 @@ async function piDitherSmoke(stage) {
   if (stage === 'initial') {
     await document.fonts.ready;
     const s = await state(), a = s.agents[0];
-    check(s.agents.length === 1 && s.desktopVersion === '0.4.0' && a.kind === 'main' && a.connected && a.phase === 'idle' && a.messages.length === 0, 'idle sole main');
+    check(s.agents.length === 1 && s.desktopVersion === '0.5.0' && a.kind === 'main' && a.connected && a.phase === 'idle' && a.messages.length === 0, 'idle sole main');
     check(a.extensionStatus.status === 'loaded' && a.activeTools.includes('subagent') && a.activeTools.includes('subagent_supervisor'), 'bundled extension tools');
     check(!location.hash && document.querySelectorAll('[data-subagent-index]').length === 0, 'no startup drafts or visible auth fragment');
     check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');
@@ -203,6 +203,10 @@ async function piDitherSmoke(stage) {
       check(seen.size >= 10, 'the accelerometer streams at 10 Hz or better (' + seen.size + ' samples)');
       const restingG = Math.hypot(motionHost.latest.x, motionHost.latest.y, motionHost.latest.z);
       check(restingG > 0.5 && restingG < 1.6, 'the resting accelerometer magnitude is about 1 g (' + restingG.toFixed(3) + ' g)');
+      if (Number.isFinite(motionHost.latest.gx)) {
+        const gyroMag = Math.hypot(motionHost.latest.gx, motionHost.latest.gy, motionHost.latest.gz);
+        check(gyroMag < 1000, 'the gyroscope streams finite deg/s values (' + gyroMag.toFixed(1) + ' deg/s)');
+      }
     } else {
       // macOS withholds the SPU accelerometer from an unprivileged process on some
       // machines. The honest answer is no samples at all, never a faked reading.
@@ -211,10 +215,11 @@ async function piDitherSmoke(stage) {
     }
     const motionStatusNode = $('[data-testid="background-motion-status"]');
     check(!!motionStatusNode && /MOTION \//.test(motionStatusNode.textContent), 'the Appearance window reports the motion status in words (' + (motionStatusNode ? motionStatusNode.textContent.trim() : 'missing') + ')');
+    // Real deliveries would interleave with the synthetic stream and blur the
+    // physics checks; pause the native feed (deliver() from this script still works).
+    if (typeof motionHost.pause === 'function') motionHost.pause();
     const motionSelect = $('[data-testid="background-motion"]');
     check(!!motionSelect, 'the Appearance window exposes the Motion control');
-    motionSelect.value = 'full'; motionSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:motion:v1') === 'full', 'the motion choice persists');
     // Deliver like a real sensor would (about 60 samples a second) so the gravity
     // filter actually converges: one sample only moves it a fraction of the way.
     const streamMotion = async (sample, count = 30) => {
@@ -223,9 +228,14 @@ async function piDitherSmoke(stage) {
         await new Promise(resolve => setTimeout(resolve, 16));
       }
     };
-    // Level first, so the current orientation is the baseline, then tip the machine.
-    await streamMotion({ x: 0, y: 0, z: 1 });
-    await new Promise(resolve => setTimeout(resolve, 400));
+    // Feed the synthetic level while motion is still off: the controller captures
+    // the baseline when the mode is switched on, so the real resting pose never
+    // produces a large enable transient (or a threshold-triggered burst).
+    await streamMotion({ x: 0, y: 0, z: 1 }, 5);
+    motionSelect.value = 'full'; motionSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:motion:v1') === 'full', 'the motion choice persists');
+    // Let the cloud settle on the synthetic level before it becomes the reference.
+    await stableCloud('the cloud settles level');
     const level = stats();
     await streamMotion({ x: .34, y: 0, z: .94 });
     await new Promise(resolve => setTimeout(resolve, 1200));
@@ -244,6 +254,7 @@ async function piDitherSmoke(stage) {
     check(localStorage.getItem('pi-desktop:motion:v1') === 'off', 'motion switches off again');
     await wait(() => shift(stats(), level) < 8, 'motion off returns the cloud home');
     check(shift(stats(), level) < 8, 'motion off returns the cloud home');
+    if (typeof motionHost.resume === 'function') motionHost.resume();
     const theme = $('[data-testid="background-theme"]');
     theme.value = '#2a4b6c'; theme.dispatchEvent(new Event('input', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:theme:v1') === '#2a4b6c', 'theme colour persists');

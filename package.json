@@ -1,6 +1,6 @@
 {
   "name": "@joeyzhuoer/pi-dither",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "A dithered native macOS workspace for core Pi, with preserved web and terminal interfaces",
   "repository": { "type": "git", "url": "https://github.com/JoeyZhuoer/pi-dither.git" },

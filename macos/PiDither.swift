@@ -13,14 +13,17 @@ import IOKit.hid
 // the interface stays honest and the app is unaffected either way.
 final class MotionBridge {
     private weak var webView: WKWebView?
-    private var manager: IOHIDManager?
-    private var device: IOHIDDevice?
+    private var accelDevice: IOHIDDevice?
+    private var gyroDevice: IOHIDDevice?
+    private var accelBuffer: UnsafeMutablePointer<UInt8>?
+    private var gyroBuffer: UnsafeMutablePointer<UInt8>?
     private var runLoop: CFRunLoop?
     private var started = false
     private var delivery: Timer?
     private var validation: Timer?
     private let lock = NSLock()
     private var latest: (x: Double, y: Double, z: Double, at: Double)?
+    private var latestGyro: (x: Double, y: Double, z: Double)?
     private var previous: (x: Double, y: Double, z: Double)?
     private var pending = false
     private var peak = 0.0
@@ -28,8 +31,8 @@ final class MotionBridge {
     private var rejected = 0
     private var magnitude = 0.0
     private var openedAt = 0.0
-    private var reportBuffer: UnsafeMutablePointer<UInt8>?
     private(set) var status = "unavailable"
+    private(set) var hasGyro = false
     private var reason = "not started"
     private var source = "none"
 
@@ -51,15 +54,21 @@ final class MotionBridge {
               listeners.add(callback);
               return () => listeners.delete(callback);
             },
+            paused: false,
+            pause() { this.paused = true; },
+            resume() { this.paused = false; },
             deliver(sample) {
               if (!sample || typeof sample !== "object") return false;
               const x = Number(sample.x), y = Number(sample.y), z = Number(sample.z);
               if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
               const at = Number.isFinite(Number(sample.at)) ? Number(sample.at) : Date.now();
               const peak = Number.isFinite(Number(sample.peak)) ? Number(sample.peak) : 0;
-              this.latest = { x: x, y: y, z: z, at: at };
+              const gx = Number(sample.gx), gy = Number(sample.gy), gz = Number(sample.gz);
+              const hasGyro = Number.isFinite(gx) && Number.isFinite(gy) && Number.isFinite(gz);
+              const payload = hasGyro ? { x: x, y: y, z: z, gx: gx, gy: gy, gz: gz, at: at, peak: peak } : { x: x, y: y, z: z, at: at, peak: peak };
+              this.latest = hasGyro ? { x: x, y: y, z: z, gx: gx, gy: gy, gz: gz, at: at } : { x: x, y: y, z: z, at: at };
               this.peak = peak;
-              for (const callback of Array.from(listeners)) { try { callback({ x: x, y: y, z: z, at: at, peak: peak }); } catch (error) {} }
+              for (const callback of Array.from(listeners)) { try { callback(payload); } catch (error) {} }
               return true;
             }
           };
@@ -80,26 +89,14 @@ final class MotionBridge {
         guard !started else { return }
         started = true
         self.webView = webView
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        let matches: [[String: Any]] = [[
-            kIOHIDPrimaryUsagePageKey as String: 0xFF00,
-            kIOHIDPrimaryUsageKey as String: 3,
-            kIOHIDTransportKey as String: "SPU",
-        ]]
-        IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDManagerRegisterDeviceMatchingCallback(manager, motionDeviceMatched, context)
-        IOHIDManagerRegisterInputReportCallback(manager, motionInputReport, context)
-        self.manager = manager
         let thread = Thread { [weak self] in
-            guard let self, let manager = self.manager else { return }
+            guard let self else { return }
             self.runLoop = CFRunLoopGetCurrent()
-            IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-            let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-            if opened != kIOReturnSuccess {
-                self.resolve(opened == kIOReturnNotPermitted || opened == kIOReturnExclusiveAccess ? "denied" : "unavailable",
-                             "HID manager open failed (\(opened))")
-            }
+            // Apple's SPU drivers keep the IMU powered down and unreporting until
+            // the driver properties below are set; without this the devices open
+            // but never send a single report (macimu's approach).
+            self.wakeSPUDrivers()
+            self.openSensors()
             CFRunLoopRun()
         }
         thread.name = "pi-dither-motion"
@@ -121,51 +118,108 @@ final class MotionBridge {
         validation?.invalidate(); validation = nil
         // The device belongs to the HID run loop: unschedule and close it there,
         // then let that loop return instead of doing it from the caller's loop.
-        if let runLoop {
-            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) { [weak self] in
-                if let self {
-                    lock.lock(); let device = self.device; let buffer = self.reportBuffer; self.device = nil; self.reportBuffer = nil; lock.unlock()
-                    if let device {
-                        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-                        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
-                    }
-                    buffer?.deallocate()
+        let closeAll = { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let accel = self.accelDevice, gyro = self.gyroDevice
+            let accelBytes = self.accelBuffer, gyroBytes = self.gyroBuffer
+            self.accelDevice = nil; self.gyroDevice = nil; self.accelBuffer = nil; self.gyroBuffer = nil
+            self.lock.unlock()
+            for device in [accel, gyro] {
+                if let device {
+                    IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+                    IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
                 }
+            }
+            accelBytes?.deallocate(); gyroBytes?.deallocate()
+        }
+        if let runLoop {
+            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+                closeAll()
                 CFRunLoopStop(CFRunLoopGetCurrent())
             }
             CFRunLoopWakeUp(runLoop)
         } else {
-            lock.lock(); let device = self.device; let buffer = self.reportBuffer; self.device = nil; self.reportBuffer = nil; lock.unlock()
-            if let device { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
-            buffer?.deallocate()
+            closeAll()
         }
     }
 
-    fileprivate func attach(_ device: IOHIDDevice) {
-        let product = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "?"
-        let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "?"
-        lock.lock(); let already = self.device != nil; lock.unlock()
-        guard !already else { return }
-        let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard opened == kIOReturnSuccess else {
-            resolve(opened == kIOReturnNotPermitted || opened == kIOReturnExclusiveAccess ? "denied" : "unavailable",
-                    "device open failed (\(opened)) for \(product)")
+    private func property(_ service: io_registry_entry_t, _ key: String) -> CFTypeRef? {
+        guard let value = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0) else { return nil }
+        return value.takeRetainedValue()
+    }
+
+    // Wake every AppleSPUHIDDriver so the IMU actually reports. Apple keeps the
+    // sensors off until these properties are set; this is the step that made the
+    // difference on hardware where the devices open but stay silent.
+    private func wakeSPUDrivers() {
+        guard let matching = IOServiceMatching("AppleSPUHIDDriver") else { return }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(0, matching, &iterator) == KERN_SUCCESS else { return }
+        var count = 0
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            count += 1
+            for (key, value) in [("SensorPropertyReportingState", 1), ("SensorPropertyPowerState", 1), ("ReportInterval", 1000)] {
+                IORegistryEntrySetCFProperty(service, key as CFString, NSNumber(value: value))
+            }
+            IOObjectRelease(service)
+            service = IOIteratorNext(iterator)
+        }
+        IOObjectRelease(iterator)
+        lock.lock(); reason = "woke \(count) SPU driver(s); waiting for input reports"; lock.unlock()
+    }
+
+    private func openSensors() {
+        guard let matching = IOServiceMatching("AppleSPUHIDDevice") else { return }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(0, matching, &iterator) == KERN_SUCCESS else {
+            resolve("unavailable", "no SPU HID devices matched")
             return
         }
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
-        lock.lock(); reportBuffer = buffer; lock.unlock()
-        IOHIDDeviceRegisterInputReportCallback(device, buffer, 64, motionInputReport, Unmanaged.passUnretained(self).toOpaque())
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-        lock.lock()
-        self.device = device
-        source = "\(product)/\(transport)"
-        reason = "waiting for input reports"
-        openedAt = ProcessInfo.processInfo.systemUptime
-        lock.unlock()
+        var accelOpened = false, gyroOpened = false
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            let page = (property(service, "PrimaryUsagePage") as? NSNumber)?.intValue ?? -1
+            let usage = (property(service, "PrimaryUsage") as? NSNumber)?.intValue ?? -1
+            let product = (property(service, "Product") as? String) ?? "?"
+            let wantsAccel = page == 0xFF00 && usage == 3 && !accelOpened
+            let wantsGyro = page == 0xFF00 && usage == 9 && !gyroOpened
+            if (wantsAccel || wantsGyro), let device = IOHIDDeviceCreate(kCFAllocatorDefault, service) {
+                let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+                if opened == kIOReturnSuccess {
+                    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
+                    if wantsAccel {
+                        accelOpened = true
+                        lock.lock(); accelDevice = device; accelBuffer = buffer; source = "\(product)/SPU"; openedAt = ProcessInfo.processInfo.systemUptime; lock.unlock()
+                        IOHIDDeviceRegisterInputReportWithTimeStampCallback(device, buffer, 4096, motionAccelReport, Unmanaged.passUnretained(self).toOpaque())
+                    } else {
+                        gyroOpened = true
+                        lock.lock(); gyroDevice = device; gyroBuffer = buffer; lock.unlock()
+                        IOHIDDeviceRegisterInputReportWithTimeStampCallback(device, buffer, 4096, motionGyroReport, Unmanaged.passUnretained(self).toOpaque())
+                    }
+                    IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+                } else {
+                    resolve(opened == kIOReturnNotPermitted || opened == kIOReturnExclusiveAccess ? "denied" : "unavailable",
+                            "device open failed (\(opened)) for \(product)")
+                }
+            }
+            IOObjectRelease(service)
+            service = IOIteratorNext(iterator)
+        }
+        IOObjectRelease(iterator)
+        if !accelOpened { resolve("unavailable", "accelerometer device not found or could not open") }
     }
 
-    // Three little-endian Float32 in g. A resting accelerometer reads about 1 g, so
-    // the first accepted sample has to be plausible before anything is claimed.
+    // 22-byte report: x, y and z as little-endian int32 Q16 after a 6-byte header.
+    static func decode(_ report: UnsafeMutablePointer<UInt8>) -> (Double, Double, Double) {
+        let bytes = UnsafeRawBufferPointer(start: report, count: 22)
+        func value(_ offset: Int) -> Int32 { Int32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: Int32.self)) }
+        return (Double(value(6)) / 65536.0, Double(value(10)) / 65536.0, Double(value(14)) / 65536.0)
+    }
+
+    // Q16 int32 in g. A resting accelerometer reads about 1 g, so the first
+    // accepted sample has to be plausible before anything is claimed.
     fileprivate func ingest(x: Double, y: Double, z: Double, at: Double) {
         guard x.isFinite, y.isFinite, z.isFinite else { return }
         let size = (x * x + y * y + z * z).squareRoot()
@@ -192,23 +246,39 @@ final class MotionBridge {
         if first { resolve("available", String(format: "validated %.3f g at rest", size)) }
     }
 
+    // Gyro in deg/s; delivered alongside the accelerometer when available.
+    fileprivate func ingestGyro(x: Double, y: Double, z: Double) {
+        guard x.isFinite, y.isFinite, z.isFinite else { return }
+        lock.lock(); latestGyro = (x, y, z); hasGyro = true; lock.unlock()
+    }
+
     private func resolve(_ next: String, _ note: String) {
         lock.lock(); status = next; reason = note; let quoted = next.replacingOccurrences(of: "'", with: ""); lock.unlock()
         log()
-        webView?.evaluateJavaScript("window.__piDitherMotionHost && (window.__piDitherMotionHost.status = '\(quoted)')", completionHandler: nil)
+        // ingest() runs on the HID thread; WKWebView must only be touched on main.
+        DispatchQueue.main.async { [weak self] in
+            self?.webView?.evaluateJavaScript("window.__piDitherMotionHost && (window.__piDitherMotionHost.status = '\(quoted)')", completionHandler: nil)
+        }
     }
 
     private func deliver() {
         lock.lock()
         guard pending, let sample = latest else { lock.unlock(); return }
         let burst = peak
+        let gyro = latestGyro
         pending = false
         peak = 0
         lock.unlock()
         // One JSON literal per delivery, at most 60 times a second.
-        let payload = String(format: "{\"x\":%.6f,\"y\":%.6f,\"z\":%.6f,\"at\":%.3f,\"peak\":%.4f}",
+        let payload: String
+        if let gyro {
+            payload = String(format: "{\"x\":%.6f,\"y\":%.6f,\"z\":%.6f,\"gx\":%.4f,\"gy\":%.4f,\"gz\":%.4f,\"at\":%.3f,\"peak\":%.4f}",
+                             sample.x, sample.y, sample.z, gyro.x, gyro.y, gyro.z, sample.at * 1000, burst)
+        } else {
+            payload = String(format: "{\"x\":%.6f,\"y\":%.6f,\"z\":%.6f,\"at\":%.3f,\"peak\":%.4f}",
                              sample.x, sample.y, sample.z, sample.at * 1000, burst)
-        webView?.evaluateJavaScript("window.__piDitherMotionHost && window.__piDitherMotionHost.deliver(\(payload))", completionHandler: nil)
+        }
+        webView?.evaluateJavaScript("window.__piDitherMotionHost && !window.__piDitherMotionHost.paused && window.__piDitherMotionHost.deliver(\(payload))", completionHandler: nil)
     }
 
     private func log() {
@@ -222,20 +292,17 @@ final class MotionBridge {
     }
 }
 
-private func motionDeviceMatched(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ device: IOHIDDevice) {
-    guard let context else { return }
-    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue().attach(device)
+private func motionAccelReport(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ type: IOHIDReportType, _ reportID: UInt32, _ report: UnsafeMutablePointer<UInt8>, _ length: CFIndex, _ timestamp: UInt64) {
+    guard let context, length == 22 else { return }
+    let values = MotionBridge.decode(report)
+    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue()
+        .ingest(x: values.0, y: values.1, z: values.2, at: ProcessInfo.processInfo.systemUptime)
 }
 
-private func motionInputReport(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ type: IOHIDReportType, _ reportID: UInt32, _ report: UnsafeMutablePointer<UInt8>, _ length: CFIndex) {
-    guard let context, length >= 12 else { return }
-    func value(_ offset: Int) -> Double {
-        var word: UInt32 = 0
-        for index in 0..<4 { word |= UInt32(report[offset + index]) << (8 * UInt32(index)) }
-        return Double(Float(bitPattern: word))
-    }
-    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue()
-        .ingest(x: value(0), y: value(4), z: value(8), at: ProcessInfo.processInfo.systemUptime)
+private func motionGyroReport(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ type: IOHIDReportType, _ reportID: UInt32, _ report: UnsafeMutablePointer<UInt8>, _ length: CFIndex, _ timestamp: UInt64) {
+    guard let context, length == 22 else { return }
+    let values = MotionBridge.decode(report)
+    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue().ingestGyro(x: values.0, y: values.1, z: values.2)
 }
 
 // The web UI is local content inside a native application, not a browser launch.
@@ -661,7 +728,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 // State the sensor truth in the pass line itself: the bridge is present
                 // either way, but a machine whose system withholds the accelerometer
                 // must not be reported as if it streamed.
-                var motionTruth = "laptop-motion bridge with live accelerometer samples"
+                var motionTruth = self.motion.hasGyro ? "laptop-motion bridge with live accelerometer and gyroscope samples" : "laptop-motion bridge with live accelerometer samples"
                 if self.motion.status != "available" { motionTruth = "laptop-motion bridge present but no sensor reports delivered on this machine (\(self.motion.status))" }
                 print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, in-window reasoning, window settings, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()

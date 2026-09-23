@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  MOTION_AXES, MOTION_CHOICES, MOTION_HOST_KEY, MOTION_KEY, MOTION_LAG, MOTION_MODES, MOTION_SHAKE, MOTION_SHAKE_DECAY, MOTION_SHAKE_THRESHOLD,
+  MOTION_AXES, MOTION_CHOICES, MOTION_GYRO_SHAKE_THRESHOLD, MOTION_HOST_KEY, MOTION_KEY, MOTION_LAG, MOTION_MODES, MOTION_SHAKE, MOTION_SHAKE_DECAY, MOTION_SHAKE_THRESHOLD,
   MOTION_SWING, cloudAxes, createMotion, gravityDirection, motionInput, motionMode, motionStatus, readMotion, sampleMagnitude, stepSway, swayMoving, writeMotion,
 } from '../desktop/public/motion.js';
 
@@ -233,4 +233,34 @@ test('the reported sample rate is measured, not assumed', () => {
   assert.equal(motion.count, 61);
   assert.ok(motion.state.rate !== 0);
   assert.equal(MOTION_SHAKE_DECAY > 0 && MOTION_SHAKE > 0, true);
+});
+
+test('the gyroscope adds angular shake and no rotation', () => {
+  // No gyro (an accelerometer-only host) leaves the shake path at rest.
+  const still = motionInput(rest, {});
+  assert.equal(still.shake, 0);
+  assert.equal(still.gyro, null);
+  assert.equal('twist' in still, false, 'there is no gyro rotation output');
+  // A sharp angular jolt shakes; quiet gyro drift never does.
+  assert.ok(motionInput({ ...rest, gx: 300 }, {}).shake > .5, 'a sharp gyro jolt shakes');
+  assert.equal(motionInput({ ...rest, gx: MOTION_GYRO_SHAKE_THRESHOLD - 2 }, {}).shake, 0, 'small gyro noise never shakes');
+  assert.ok(motionInput({ ...rest, gz: 120 }, {}).shake > .2, 'a fast yaw shakes');
+  assert.equal(motionInput({ ...rest, gz: MOTION_GYRO_SHAKE_THRESHOLD - 2 }, {}).shake, 0, 'slow gyro drift never shakes');
+});
+
+test('motion off and tilt ignore the gyroscope; full mode shakes on a jolt', () => {
+  const host = fakeHost({ status: 'available' });
+  const motion = createMotion({ provider: host, storage: store(), document: { defaultView: fakeView() } });
+  for (let index = 0; index < 5; index++) host.deliver({ ...rest, gx: 400, at: index * 16 });
+  for (let step = 0; step < 30; step++) motion.step(1 / 60);
+  assert.equal(motion.shake, 0, 'off never shakes');
+  motion.setMode('tilt');
+  for (let index = 0; index < 5; index++) host.deliver({ ...rest, gx: 400, at: 100 + index * 16 });
+  for (let step = 0; step < 30; step++) motion.step(1 / 60);
+  assert.equal(motion.shake, 0, 'tilt mode never shakes');
+  motion.setMode('full');
+  host.deliver({ ...rest, gx: 400, at: 500 });
+  motion.step(1 / 60);
+  assert.ok(motion.shake > .5, `full mode bursts on an angular jolt (${motion.shake})`);
+  motion.destroy();
 });
