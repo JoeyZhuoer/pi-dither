@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  CLOUD_CHOICES, CLOUD_POINTER_KEY, CLOUD_POINTERS, LINK_DISTANCE, PARTICLE_CHOICES, PARTICLE_MODES, PHOTO_POINTS, PHOTO_SPEED,
+  CLOUD_CHOICES, CLOUD_POINTER_KEY, CLOUD_POINTERS, LINK_DISTANCE, PARTICLE_CHOICES, PARTICLE_MODES, PHOTO_POINTS, PHOTO_SIZE, PHOTO_SPEED,
   cloudPointer, cloudStrength, createField, createPhotoPool, drawField, drawPhotoCloud, linkPairs, particleCount, particleMode, photoCloud,
   readCloudPointer, readParticles, stepField, stepPhotoCloud, writeCloudPointer, writeParticles,
 } from '../desktop/public/particles.js';
@@ -119,6 +119,8 @@ test('particle modes and the cloud pointer keep the reference constants', () => 
   assert.deepEqual(PARTICLE_CHOICES.map(([value]) => value), ['off', 'sparse', 'normal', 'dense']);
   assert.deepEqual(CLOUD_CHOICES.map(([value]) => value), ['push', 'pull']);
   assert.equal(particleMode('photo'), 'off', 'legacy photo modes are no longer particle modes');
+  assert.equal(PHOTO_POINTS, 20000, '20k point cloud');
+  assert.equal(PHOTO_SIZE, 3, '3px dots');
   assert.equal(CLOUD_POINTERS.push, -100, 'the site default spread');
   assert.equal(CLOUD_POINTERS.pull, 40, 'the site gather');
   assert.deepEqual(PHOTO_SPEED, [20, 30], 'the site easing range');
@@ -194,7 +196,9 @@ test('drawPhotoCloud paints tinted pixel dots with a pointer parallax', () => {
   const cloud = { count: 1, points: new Float32Array(7) };
   assert.equal(drawPhotoCloud(ctx, pool, cloud), true);
   assert.equal(calls.fillRect, 1, 'invisible and surplus dots are skipped');
-  assert.match(ctx.fillStyle, /^rgba\(255,0,0,1\.000\)$/);
+  // Colours are cached in 32-level buckets, so the red dot lands near pure red.
+  const [drawnRed, drawnGreen, drawnBlue, drawnAlpha] = ctx.fillStyle.match(/[\d.]+/g).map(Number);
+  assert.ok(drawnRed >= 248 && drawnGreen <= 8 && drawnBlue <= 8 && drawnAlpha === 1, `quantized red dot (${ctx.fillStyle})`);
   const offset = (pointer) => {
     const local = frame();
     drawPhotoCloud(local.ctx, [{ pointIdx: 0, speed: 20, x: 10, y: 20, z: 1, r: 1, g: 1, b: 1, a: 1 }], cloud, { pointer, centerX: 0, centerY: 0 });

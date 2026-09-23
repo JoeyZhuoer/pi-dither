@@ -15,7 +15,8 @@ export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal'
 // The reference site's signed force: its default SPREAD pushes, its GATHER pulls.
 export const CLOUD_POINTERS = { push: -100, pull: 40 };
 export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
-export const PHOTO_POINTS = 4000;
+export const PHOTO_POINTS = 20_000;
+export const PHOTO_SIZE = 3;
 export const PHOTO_SPEED = [20, 30];
 export const LINK_DISTANCE = 90;
 export const INK = '#20201f';
@@ -239,19 +240,30 @@ export function stepPhotoCloud(pool, cloud, { pointer, strength = cloudStrength(
 
 // Draws the pool as pixel dots tinted by the sampled photo colour, with a light
 // depth parallax so the cloud tilts toward the pointer like the site's view.
-export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY = 0, size = 2 } = {}) {
+// With ~20k points, styles are cached in coarse colour/alpha buckets so each
+// frame does far fewer fillStyle assignments than fills.
+export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY = 0, size = PHOTO_SIZE, styles } = {}) {
   if (!ctx || !pool) return false;
   const count = cloud?.count ?? 0;
   const tiltX = pointer ? (pointer.x - centerX) * .02 : 0;
   const tiltY = pointer ? (pointer.y - centerY) * .02 : 0;
+  const cache = styles instanceof Map ? styles : new Map();
+  const half = size / 2;
   for (const particle of pool) {
     if (particle.a <= .01 || particle.pointIdx >= count) continue;
     const alpha = Math.min(1, particle.a);
     const red = Math.round(Math.max(0, Math.min(1, particle.r)) * 255);
     const green = Math.round(Math.max(0, Math.min(1, particle.g)) * 255);
     const blue = Math.round(Math.max(0, Math.min(1, particle.b)) * 255);
-    ctx.fillStyle = `rgba(${red},${green},${blue},${alpha.toFixed(3)})`;
-    ctx.fillRect(Math.round(particle.x + tiltX * particle.z - size / 2), Math.round(particle.y + tiltY * particle.z - size / 2), size, size);
+    // 32 levels per channel and 8 alpha steps: visually smooth, few buckets.
+    const key = (((red >> 3) * 32 + (green >> 3)) * 32 + (blue >> 3)) * 8 + Math.min(7, Math.round(alpha * 7));
+    let style = cache.get(key);
+    if (style === undefined) {
+      style = `rgba(${(red >> 3) * 8 + 4},${(green >> 3) * 8 + 4},${(blue >> 3) * 8 + 4},${(Math.min(7, Math.round(alpha * 7)) / 7).toFixed(3)})`;
+      if (cache.size < 4096) cache.set(key, style);
+    }
+    ctx.fillStyle = style;
+    ctx.fillRect(Math.round(particle.x + tiltX * particle.z - half), Math.round(particle.y + tiltY * particle.z - half), size, size);
   }
   return true;
 }
@@ -265,6 +277,7 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
   const source = typeof random === 'function' ? random : Math.random;
   let mode = readParticles(storage), pointerMode = readCloudPointer(storage);
   let field = null, pool = null, cloud = null, resizeTimer = null;
+  const styles = new Map();
   let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false;
   const ctx = canvas?.getContext?.('2d');
   const now = () => view()?.performance?.now?.() ?? Date.now();
@@ -296,7 +309,7 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     if (!ctx || !canvas) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (field) drawField(ctx, field);
-    if (cloud) drawPhotoCloud(ctx, pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2 });
+    if (cloud) drawPhotoCloud(ctx, pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, styles });
   }
 
   const schedule = (callback) => (typeof view()?.requestAnimationFrame === 'function'
