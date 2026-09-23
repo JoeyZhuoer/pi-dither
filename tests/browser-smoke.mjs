@@ -195,6 +195,12 @@ try {
       }
       return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
     })()`;
+    const regionHash = (x, y, size) => `(() => {
+      const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(${x}, ${y}, ${size}, ${size}).data;
+      let h = 2166136261;
+      for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i] ^ d[i + 3], 16777619);
+      return h;
+    })()`;
     const sameRegion = (a, b) => Math.abs(a.inked - b.inked) <= Math.max(20, a.inked * .01) && Math.hypot(a.cx - b.cx, a.cy - b.cy) < .5;
     const untilRegion = async (expression, target, label) => {
       for (let i = 0; i < 100; i++) {
@@ -210,7 +216,10 @@ try {
     const near = { x: cursor.x + 140, y: cursor.y + 60 };
     const nearStats = regionStats(near.x - box / 2, near.y - box / 2, box);
     const farStats = regionStats(cloudCanvas.width - box, cloudCanvas.height - box, box);
-    const homeNear = await evaluate(nearStats), homeFar = await evaluate(farStats);
+    // Beyond the radius a mouse move must not change a single pixel: no force
+    // reaches there and the depth tilt is off, so this can be compared exactly.
+    const farHash = regionHash(cloudCanvas.width - box, cloudCanvas.height - box, box);
+    const homeNear = await evaluate(nearStats), homeFar = await evaluate(farStats), homeFarHash = await evaluate(farHash);
     assert.ok(Math.hypot(near.x + box / 2 - cursor.x, near.y + box / 2 - cursor.y) < 480, 'the near box is inside the cloud radius');
     await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: ${cursor.x}, clientY: ${cursor.y}, bubbles: true }))`);
     await settleForced('the push settles');
@@ -222,6 +231,8 @@ try {
     assert.ok(!sameRegion(pulledNear, pushedNear), 'pull rearranges the points around the cursor');
     assert.ok(sameRegion(pulledFar, pushedFar), 'no force reaches beyond CLOUD_RADIUS in either direction');
     assert.ok(sameRegion(pushedFar, homeFar), 'and the far box never leaves home');
+    assert.equal(await evaluate(farHash), homeFarHash, 'far dots are pixel-identical while the pointer works');
+    assert.equal(await evaluate(farHash), homeFarHash, 'in both force directions');
     await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'push'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
     await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
     await untilRegion(nearStats, homeNear, 'the stirred box springs home');
@@ -229,6 +240,7 @@ try {
     const settled = await evaluate(cloudStats);
     assert.ok(Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
     assert.ok(sameRegion(await evaluate(farStats), homeFar), 'and the far box is still home');
+    assert.equal(await evaluate(farHash), homeFarHash, 'with its pixels exactly restored');
     // The signed force switch mirrors the site's push/pull modes.
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), 'push', 'the chosen direction persists');
     await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'pull'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);

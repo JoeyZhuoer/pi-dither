@@ -15,7 +15,7 @@ export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal'
 // The reference site's signed force: its default SPREAD pushes, its GATHER pulls.
 export const CLOUD_POINTERS = { push: -100, pull: 40 };
 export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
-export const PHOTO_POINTS = 400_000;
+export const PHOTO_POINTS = 800_000;
 export const PHOTO_SIZE = 1;
 export const PHOTO_SPEED = [20, 30];
 // The site's force is 1/(1+d)² with no limit, which keeps tugging the whole
@@ -28,6 +28,24 @@ export const CLOUD_FALLOFF = 2;
 // than the spring right at the cursor, so the gather overshoots every frame and
 // never settles; 1.5 keeps the push/drift feel and makes both modes converge.
 export const CLOUD_STIFFNESS = 1.5;
+// The site's PERSPECTIVE mode tilts the whole cloud by (pointer - centre) * 0.02
+// per unit of depth, which moves every dot on the canvas -- including ones far
+// away -- whenever the mouse moves. Keep it as a knob, off by default.
+export const CLOUD_PARALLAX = 0;
+// A step below these means the drawn frame is already up to date: the controller
+// stops stepping and drawing until the pointer or the photo changes.
+export const CLOUD_SETTLE = .002;
+export const CLOUD_SETTLE_ALPHA = .004;
+
+// ImageData is RGBA byte order; a little-endian Uint32 view writes one pixel in
+// one store, which is ~2x faster than four byte stores at hundreds of thousands
+// of dots per frame. Big-endian hosts fall back to byte writes.
+export const LITTLE_ENDIAN = (() => {
+  const probe = new Uint8Array(4), word = new Uint32Array(probe.buffer);
+  word[0] = 0x0a0b0c0d;
+  return probe[0] === 0x0d;
+})();
+const RED = LITTLE_ENDIAN ? 0 : 3, GREEN = 1, BLUE = LITTLE_ENDIAN ? 2 : 1, ALPHA = LITTLE_ENDIAN ? 3 : 0;
 export const LINK_DISTANCE = 90;
 export const INK = '#20201f';
 const MAX_PARTICLES = 400;
@@ -193,16 +211,25 @@ export function photoCloud(sample, { max = PHOTO_POINTS, random = Math.random } 
   // Decimate by count, not by a coordinate grid: a stride would alias against
   // the ordered dither and drop most of the image.
   const stride = Math.max(1, Math.ceil(inked / Math.max(1, Math.floor(max))));
-  const values = [];
-  let seen = 0;
-  for (let index = 0; index < ink.length && values.length / 7 < max; index++) {
+  // Count the selected cells first so the cloud lands in a single typed array: at
+  // hundreds of thousands of points an intermediate JS array costs tens of MB.
+  let selected = 0, rank = 0;
+  for (let index = 0; index < ink.length; index++) if (ink[index] && rank++ % stride === 0) selected++;
+  const points = new Float32Array(selected * 7);
+  let at = 0, seen = 0;
+  for (let index = 0; index < ink.length && at < points.length; index++) {
     if (!ink[index]) continue;
     if (seen++ % stride) continue;
-    const x = index % width, y = (index - x) / width, at = index * 4;
-    values.push(x + .5 - width / 2 + (random() - .5) * .8, height / 2 - (y + .5) + (random() - .5) * .8, (random() - .5) * 2,
-      data[at] / 255, data[at + 1] / 255, data[at + 2] / 255, 1);
+    const x = index % width, y = (index - x) / width, pixel = index * 4;
+    points[at++] = x + .5 - width / 2 + (random() - .5) * .8;
+    points[at++] = height / 2 - (y + .5) + (random() - .5) * .8;
+    points[at++] = (random() - .5) * 2;
+    points[at++] = data[pixel] / 255;
+    points[at++] = data[pixel + 1] / 255;
+    points[at++] = data[pixel + 2] / 255;
+    points[at++] = 1;
   }
-  return { count: values.length / 7, points: Float32Array.from(values) };
+  return { count: at / 7, points };
 }
 
 // A pool of particles ready to fly to the cloud, starting scattered like the
@@ -211,62 +238,73 @@ export function photoCloud(sample, { max = PHOTO_POINTS, random = Math.random } 
 // cost tens of MB and churn the GC every frame.
 export function createPhotoPool(count, width, height, random = Math.random) {
   const total = Math.max(0, Math.min(PHOTO_POINTS, Math.floor(Number(count) || 0)));
-  const positions = new Float32Array(total * 3), colors = new Float32Array(total * 4), speeds = new Float32Array(total);
+  const positions = new Float32Array(total * 3), colors = new Float32Array(total * 4);
+  const speeds = new Float32Array(total), ease = new Float32Array(total), swatch = new Uint32Array(total);
   for (let index = 0; index < total; index++) {
     positions[index * 3] = (random() - .5) * width;
     positions[index * 3 + 1] = (random() - .5) * height;
     positions[index * 3 + 2] = (random() - .5) * 2;
     colors[index * 4] = .5; colors[index * 4 + 1] = .5; colors[index * 4 + 2] = .5; colors[index * 4 + 3] = -1;
     speeds[index] = PHOTO_SPEED[0] + random() * (PHOTO_SPEED[1] - PHOTO_SPEED[0]);
+    // 1/speed is constant per point; precompute it and cache each point's opaque
+    // pixel word so a settled dot costs one load and one store to draw.
+    ease[index] = 1 / speeds[index];
   }
-  return { count: total, positions, colors, speeds };
+  return { count: total, positions, colors, speeds, ease, swatch };
 }
 
 // One frame of the reference site's motion: ease toward the assigned point with
 // s = 1/speed, plus the signed pointer force strength * (pointer - p) / (1+d)².
 export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0, strength = cloudStrength('push') } = {}) {
   const count = cloud?.count ?? 0, points = cloud?.points;
-  const { positions, colors, speeds } = pool;
   // The canvas pointer is Y-down and measured from the top-left; cloud points
   // live in the centred, Y-up frame the photo was sampled in.
   const pointerX = pointer ? pointer.x - centerX : 0;
   const pointerY = pointer ? centerY - pointer.y : 0;
   const reach = CLOUD_RADIUS * CLOUD_RADIUS;
+  const { positions, colors, ease: eases } = pool;
+  let moving = false;
   for (let index = 0; index < pool.count; index++) {
-    const ease = 1 / speeds[index];
+    const ease = eases[index];
     const at = index * 3, colorAt = index * 4;
-    if (index >= count || !points) { colors[colorAt + 3] += (-1 - colors[colorAt + 3]) * ease; continue; }
+    if (index >= count || !points) {
+      const fade = (-1 - colors[colorAt + 3]) * ease;
+      colors[colorAt + 3] += fade;
+      if (fade > CLOUD_SETTLE_ALPHA || fade < -CLOUD_SETTLE_ALPHA) moving = true;
+      continue;
+    }
     const targetAt = index * 7;
     const targetX = points[targetAt], targetY = points[targetAt + 1], targetZ = points[targetAt + 2];
     let forceX = 0, forceY = 0, stiffness = 0;
     if (pointer) {
       const gapX = pointerX - positions[at], gapY = pointerY - positions[at + 1];
-      // Beyond the radius there is no force at all: no far-field drift, and the
-      // squared test keeps 200k points cheap.
       const distanceSquared = gapX * gapX + gapY * gapY;
       if (distanceSquared < reach) {
         const distance = Math.sqrt(distanceSquared);
         const window = (1 - distance / CLOUD_RADIUS) ** CLOUD_FALLOFF;
-        // The site's curve 1/(1+d)², squared away by the window and pulled in by
-        // the stiffness cap, so the pull/push decays smoothly and stays stable.
         stiffness = Math.min(CLOUD_STIFFNESS, Math.abs(strength) * window / (1 + distance) / (1 + distance)) * Math.sign(strength);
         forceX = stiffness * gapX;
         forceY = stiffness * gapY;
-      }
+      } else if (positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
+    } else if (positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
+    let stepX = (targetX - positions[at]) * ease + forceX;
+    let stepY = (targetY - positions[at + 1]) * ease + forceY;
+    let alphaStep = (points[targetAt + 6] - colors[colorAt + 3]) * ease;
+    if (stiffness) {   // only a forced point needs the damping divide
+      const damp = 1 + (stiffness > 0 ? stiffness : -stiffness);
+      stepX /= damp; stepY /= damp; alphaStep /= damp;
     }
-    // Damp the whole step by (1 + |k|): the site adds the force undamped, which
-    // makes the gather's fixed point repelling (it oscillates forever). Damping
-    // leaves every fixed point identical but makes it attracting.
-    const damp = 1 + Math.abs(stiffness);
-    positions[at] += ((targetX - positions[at]) * ease + forceX) / damp;
-    positions[at + 1] += ((targetY - positions[at + 1]) * ease + forceY) / damp;
+    positions[at] += stepX;
+    positions[at + 1] += stepY;
     positions[at + 2] += (targetZ - positions[at + 2]) * ease;
     colors[colorAt] += (points[targetAt + 3] - colors[colorAt]) * ease;
     colors[colorAt + 1] += (points[targetAt + 4] - colors[colorAt + 1]) * ease;
     colors[colorAt + 2] += (points[targetAt + 5] - colors[colorAt + 2]) * ease;
-    colors[colorAt + 3] += (points[targetAt + 6] - colors[colorAt + 3]) * ease;
+    colors[colorAt + 3] += alphaStep;
+    if (!moving && (stepX > CLOUD_SETTLE || stepX < -CLOUD_SETTLE || stepY > CLOUD_SETTLE || stepY < -CLOUD_SETTLE
+      || alphaStep > CLOUD_SETTLE_ALPHA || alphaStep < -CLOUD_SETTLE_ALPHA)) moving = true;
   }
-  return pool;
+  return moving;
 }
 
 // Draws the pool straight into an ImageData buffer tinted by the sampled photo
@@ -274,7 +312,7 @@ export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0,
 // the site's view. At 200k points per-pixel writes beat one fillRect each by a
 // wide margin, and the same buffer is reused (and replaced wholesale, which also
 // clears the previous frame). Pass `buffer` = { width, height, image } to reuse.
-export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY = 0, size = PHOTO_SIZE, width, height, buffer } = {}) {
+export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY = 0, size = PHOTO_SIZE, parallax = CLOUD_PARALLAX, width, height, buffer } = {}) {
   if (!ctx || !pool) return false;
   const canvasWidth = Math.max(1, Math.floor(width ?? ctx.canvas?.width ?? 0));
   const canvasHeight = Math.max(1, Math.floor(height ?? ctx.canvas?.height ?? 0));
@@ -282,10 +320,13 @@ export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY
     ? buffer.image : ctx.createImageData?.(canvasWidth, canvasHeight);
   if (!image?.data) return false;
   const data = image.data;
-  data.fill(0);
+  if (LITTLE_ENDIAN && !(image.words instanceof Uint32Array)) image.words = new Uint32Array(data.buffer);
+  let words = null;
+  if (LITTLE_ENDIAN && image.words?.length === data.length / 4) { words = image.words; words.fill(0); }
+  else data.fill(0);
   const count = cloud?.count ?? 0, points = cloud?.points;
-  const tiltX = pointer ? (pointer.x - centerX) * .02 : 0;
-  const tiltY = pointer ? (centerY - pointer.y) * .02 : 0;
+  const tiltX = pointer ? (pointer.x - centerX) * parallax : 0;
+  const tiltY = pointer ? (centerY - pointer.y) * parallax : 0;
   const half = size / 2;
   for (let index = 0; index < pool.count; index++) {
     const alpha = pool.colors[index * 4 + 3];
@@ -297,13 +338,30 @@ export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY
     const fromX = Math.max(0, drawX), fromY = Math.max(0, drawY);
     const toX = Math.min(canvasWidth, drawX + size), toY = Math.min(canvasHeight, drawY + size);
     if (fromX >= toX || fromY >= toY) continue;
-    const red = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4])) * 255);
-    const green = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4 + 1])) * 255);
-    const blue = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4 + 2])) * 255);
-    const opacity = Math.round(Math.min(1, alpha) * 255);
-    for (let y = fromY; y < toY; y++) {
-      let at = (y * canvasWidth + fromX) * 4;
-      for (let x = fromX; x < toX; x++, at += 4) { data[at] = red; data[at + 1] = green; data[at + 2] = blue; data[at + 3] = opacity; }
+    // Fully opaque dots are the settled majority: their packed pixel word only
+    // depends on the photo colour, so build it once per point.
+    let packed = alpha >= 1 - .5 / 255 && pool.swatch ? pool.swatch[index] : 0;
+    let opacity = 0;
+    if (!packed) {
+      const red = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4])) * 255);
+      const green = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4 + 1])) * 255);
+      const blue = Math.round(Math.max(0, Math.min(1, pool.colors[index * 4 + 2])) * 255);
+      opacity = Math.round(Math.min(1, alpha) * 255);
+      packed = (opacity << 24) | (blue << 16) | (green << 8) | red;
+      if (opacity === 255 && pool.swatch) pool.swatch[index] = packed;
+    }
+    if (words) {
+      for (let y = fromY; y < toY; y++) {
+        const row = y * canvasWidth;
+        for (let x = fromX; x < toX; x++) words[row + x] = packed;
+      }
+    } else {
+      const red = packed & 255, green = (packed >> 8) & 255, blue = (packed >> 16) & 255;
+      const alphaByte = (packed >>> 24) & 255;
+      for (let y = fromY; y < toY; y++) {
+        let at = (y * canvasWidth + fromX) * 4;
+        for (let x = fromX; x < toX; x++, at += 4) { data[at + RED] = red; data[at + GREEN] = green; data[at + BLUE] = blue; data[at + ALPHA] = alphaByte; }
+      }
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -320,7 +378,7 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
   let mode = readParticles(storage), pointerMode = readCloudPointer(storage);
   let field = null, pool = null, cloud = null, resizeTimer = null;
   const frameBuffer = { width: 0, height: 0, image: null };
-  let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false;
+  let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false, dirty = true;
   const ctx = canvas?.getContext?.('2d');
   const now = () => view()?.performance?.now?.() ?? Date.now();
   const active = () => !disposed && (Boolean(cloud) || (mode !== 'off' && Boolean(field)));
@@ -373,27 +431,36 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
 
   function tick(time) {
     frame = null;
-    if (suspended()) { draw(); return; }
+    if (suspended()) { if (dirty) { draw(); dirty = false; } return; }
     const current = Number.isFinite(time) ? time : now();
-    const seconds = Math.min(.05, Math.max(0, (current - lastTime) / 1000));
+    // A wake clears lastTime, so the first frame after it always advances one
+    // step: the rAF timestamp can predate the wake that scheduled it.
+    const seconds = lastTime ? Math.min(.05, Math.max(0, (current - lastTime) / 1000)) : 1 / 60;
     lastTime = current;
-    if (field) stepField(field, { width: canvas.width, height: canvas.height, seconds });
+    let moving = false, stepped = false;
+    if (field) { stepField(field, { width: canvas.width, height: canvas.height, seconds }); moving = true; }
     if (cloud) {
       // The reference site steps its cloud on a ~60fps queue with frame-based
       // easing, so keep that cadence even on a 120Hz display.
       accumulator = Math.min(.1, accumulator + seconds);
       while (accumulator >= 1 / 60) {
-        stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, strength: cloudStrength(pointerMode) });
         accumulator -= 1 / 60;
+        stepped = true;
+        if (stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, strength: cloudStrength(pointerMode) })) moving = true;
       }
     }
-    draw();
-    frame = schedule(tick);
+    if (moving) dirty = true;
+    if (dirty) { draw(); dirty = false; }
+    // A settled cloud costs nothing until the pointer, photo or size changes. A
+    // frame whose delta did not add up to a whole step is not settled yet, so
+    // keep the loop alive for the step that is still pending.
+    if (moving || (cloud && !stepped)) frame = schedule(tick);
   }
 
   function wake() {
+    dirty = true;
     if (frame != null || disposed) return;
-    lastTime = now(); accumulator = 0;
+    lastTime = 0; accumulator = 0;
     frame = schedule(tick);
   }
 
@@ -404,9 +471,13 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     if (!suspended()) wake();
   };
   // Leaving the window drops the force so the cloud springs home.
-  const onPointerLeave = () => { inside = false; };
-  const onVisibility = () => { if (suspended()) { unschedule(frame); frame = null; draw(); } else wake(); };
-  const onMotion = () => { unschedule(frame); frame = null; draw(); if (!suspended()) wake(); };
+  const onPointerLeave = () => {
+    if (!inside) return;
+    inside = false;
+    wake();
+  };
+  const onVisibility = () => { if (suspended()) { unschedule(frame); frame = null; draw(); dirty = false; } else wake(); };
+  const onMotion = () => { unschedule(frame); frame = null; draw(); dirty = false; if (!suspended()) wake(); };
   const onResize = () => {
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {

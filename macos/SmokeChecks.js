@@ -112,13 +112,16 @@ async function piDitherSmoke(stage) {
       }
       return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
     };
+    const regionHash = (x, y, size) => { const d = $('#particles').getContext('2d').getImageData(x, y, size, size).data; let hash = 2166136261; for (let i = 0; i < d.length; i += 4) hash = Math.imul(hash ^ d[i] ^ d[i + 3], 16777619); return hash; };
     const sameRegion = (a, b) => Math.abs(a.inked - b.inked) <= Math.max(20, a.inked * .01) && Math.hypot(a.cx - b.cx, a.cy - b.cy) < .5;
     const canvas = $('#particles'), box = 200;
     const cursor = { x: canvas.width / 2, y: canvas.height / 2 };
     const near = { x: cursor.x + 140, y: cursor.y + 60 };
     const nearStats = () => regionStats(near.x - box / 2, near.y - box / 2, box);
     const farStats = () => regionStats(canvas.width - box, canvas.height - box, box);
-    const homeNear = nearStats(), homeFar = farStats();
+    // Beyond the radius a mouse move must not change a single pixel.
+    const farHash = () => regionHash(canvas.width - box, canvas.height - box, box);
+    const homeNear = nearStats(), homeFar = farStats(), homeFarHash = farHash();
     check(Math.hypot(near.x + box / 2 - cursor.x, near.y + box / 2 - cursor.y) < 480, 'the near box sits inside the cloud radius');
     check(Math.hypot(canvas.width - box - cursor.x, canvas.height - box - cursor.y) > 520, 'the far box sits outside the cloud radius');
     // A held pointer balances the spring against the force, so settle on
@@ -147,6 +150,7 @@ async function piDitherSmoke(stage) {
     await settleForced('the pull settles');
     check(!sameRegion(nearStats(), pushedNear), 'pull rearranges the points around the cursor');
     check(sameRegion(farStats(), pushedFar) && sameRegion(pushedFar, homeFar), 'no force reaches beyond CLOUD_RADIUS in either direction');
+    check(farHash() === homeFarHash, 'far dots stay pixel-identical in both force directions');
     $('[data-testid="background-cloud"]').value = 'push';
     $('[data-testid="background-cloud"]').dispatchEvent(new Event('change', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:cloud-pointer:v1') === 'push', 'push restores');
@@ -154,7 +158,7 @@ async function piDitherSmoke(stage) {
     await waitRegion(nearStats, homeNear, 'the cloud springs home');
     await stableCloud('the cloud springs home');
     const settled = stats();
-    check(sameRegion(nearStats(), homeNear) && sameRegion(farStats(), homeFar), 'the stirred region springs back to its home shape');
+    check(sameRegion(nearStats(), homeNear) && sameRegion(farStats(), homeFar) && farHash() === homeFarHash, 'the stirred region springs back to its home shape');
     check(shift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03),
       `the cloud springs back to its home shape [home ${home.inked}@${home.cx.toFixed(1)},${home.cy.toFixed(1)} → settled ${settled.inked}@${settled.cx.toFixed(1)},${settled.cy.toFixed(1)}]`);
     // Extra drifting field on top of the cloud.
