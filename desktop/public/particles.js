@@ -404,7 +404,9 @@ export function createParticles({ canvas, storage, photo, motion, document: doc 
   let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false, dirty = true;
   // Laptop motion (off unless the user enables it): a sample only wakes the loop
   // while the mode is on. `motion` may be injected for tests.
-  const motionController = motion ?? createMotion({ storage, document: doc, onSample: () => { if (motionController.mode !== 'off' && !suspended()) wake(); } });
+  const motionHolder = { current: motion || null };
+  const motionController = motionHolder.current || createMotion({ storage, document: doc, onSample: () => { if (motionHolder.current && motionHolder.current.mode !== 'off' && !suspended()) wake(); } });
+  motionHolder.current = motionController;
   const ctx = canvas?.getContext?.('2d');
   const now = () => view()?.performance?.now?.() ?? Date.now();
   const active = () => !disposed && (Boolean(cloud) || (mode !== 'off' && Boolean(field)));

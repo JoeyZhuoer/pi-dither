@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   MOTION_AXES, MOTION_CHOICES, MOTION_HOST_KEY, MOTION_KEY, MOTION_LAG, MOTION_MODES, MOTION_SHAKE, MOTION_SHAKE_DECAY, MOTION_SHAKE_THRESHOLD,
-  MOTION_SWING, cloudAxes, createMotion, gravityDirection, motionInput, motionMode, readMotion, sampleMagnitude, stepSway, swayMoving, writeMotion,
+  MOTION_SWING, cloudAxes, createMotion, gravityDirection, motionInput, motionMode, motionStatus, readMotion, sampleMagnitude, stepSway, swayMoving, writeMotion,
 } from '../desktop/public/motion.js';
 
 const store = (initial = {}) => {
@@ -65,6 +65,13 @@ test('motion modes normalize and persist', () => {
   assert.equal(writeMotion(storage, 'nonsense'), 'off', 'a bad value falls back to off');
   assert.equal(readMotion({ getItem() { throw new Error('denied'); } }), 'off');
   assert.equal(writeMotion({ setItem() { throw new Error('denied'); } }, 'tilt'), 'tilt', 'storage failure is not fatal');
+  // A host may only report the three contract statuses: anything else is clamped
+  // so it cannot inject text, and a missing status is never read as available.
+  assert.equal(motionStatus('available'), 'available');
+  assert.equal(motionStatus('DENIED'), 'denied');
+  assert.equal(motionStatus('unavailable'), 'unavailable');
+  assert.equal(motionStatus(undefined), 'unavailable');
+  assert.equal(motionStatus('<b>live</b>'), 'unavailable');
 });
 
 test('gravity is a low-passed unit vector with the raw magnitude kept', () => {

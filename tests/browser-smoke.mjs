@@ -25,7 +25,7 @@ class BrowserFixture extends EventEmitter {
     this.calls.push(action);
     if (action === 'prompt') {
       this.state.messages.push({ id: `u${this.calls.length}`, role: 'user', text: input.message, at: Date.now(), status: 'done' },
-        { id: `a${this.calls.length}`, role: 'assistant', text: '# Review result\n\n**Read-only finding**: <img src=x onerror="window.pwned=1">\n\n| Check | Result |\n| --- | --- |\n| Tools | Read only |\n\n```js\nconst ok = true;\n```', at: Date.now(), status: 'done' });
+        { id: `a${this.calls.length}`, role: 'assistant', thinking: `Thinking sample ${this.calls.length} · checking the fixture.`, text: '# Review result\n\n**Read-only finding**: <img src=x onerror="window.pwned=1">\n\n| Check | Result |\n| --- | --- |\n| Tools | Read only |\n\n```js\nconst ok = true;\n```', at: Date.now(), status: 'done' });
     }
     if (action === 'tools') this.state.activeTools = [...input.tools];
     this.state.revision++; this.emit('change');
@@ -340,7 +340,9 @@ try {
   assert.equal(await evaluate('document.querySelector("[data-feature=workspace]").hidden'), false, 'every window stays in the Windows menu');
   await evaluate(`document.querySelector('#settings').click()`);
   assert.equal(await evaluate('document.querySelector("#settings-dialog").open'), true, 'settings dialog opens');
-  assert.equal(await evaluate('document.querySelectorAll("#settings-list input[type=checkbox]").length'), 9, 'every window is listed in settings');
+  assert.equal(await evaluate('document.querySelectorAll("#settings-list input[type=checkbox]").length'), 10, 'every window plus the thinking panel is listed in settings');
+  assert.equal(await evaluate('["models","providers","workspace","git","usage","sessions","activity","tools","background"].filter((id) => document.querySelector(`[data-testid="settings-${id}"]`)).length'), 9, 'each window keeps its own settings row');
+  assert.equal(await evaluate('document.querySelector("[data-testid=settings-thinking]").checked'), true, 'the thinking panel row starts ticked');
   await evaluate(`{ const box = document.querySelector('[data-testid="settings-workspace"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#settings-dialog').close(); }`);
   assert.equal(await evaluate('document.querySelector("#tasks button[data-window-id=workspace]").hidden'), false, 'ticking a window adds its bottom button');
   assert.deepEqual(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:taskbar:v1")).sort()'), ['activity', 'background', 'sessions', 'tools', 'usage', 'workspace'], 'choice persists');
@@ -469,6 +471,121 @@ try {
     assert.equal(await evaluate(`document.querySelectorAll('[data-subagent-index="1"]').length`), 1, 'closed live subagent number is reusable');
     await evaluate(`document.querySelector('[data-subagent-index="1"] button[aria-label="Close subagent window"]').click()`);
   }
+  // Streaming Thinking panel: reasoning lives on the right rail, never in a window.
+  assert.ok(await evaluate('document.querySelector("#thinking-panel") instanceof HTMLElement'), 'the thinking panel is on the right rail');
+  assert.equal(await evaluate('document.querySelector("#thinking-panel").hidden'), false, 'the thinking panel is visible by default');
+  assert.equal(await evaluate('document.querySelector("#thinking-panel").nextElementSibling.id'), 'usage-diagram', 'the panel is the right-rail block above the usage chart');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#thinking-panel")).position'), 'fixed', 'the panel is anchored to the rail rather than the window flow');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#thinking-panel")).right'), '25px', 'the panel keeps the rail margin');
+  assert.equal(await evaluate('document.querySelector("[data-testid=settings-thinking]").checked'), true, 'the settings row is ticked by default');
+  assert.equal(await evaluate('document.querySelectorAll(".thinking-content").length'), 0, 'no window renders thinking content');
+  assert.equal(await evaluate('[...document.querySelectorAll(".conversation summary")].filter((node) => node.textContent.trim() === "Thinking").length'), 0, 'no conversation offers a Thinking expander');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-state]").textContent'), 'IDLE', 'the marker starts idle rather than live');
+  assert.equal(await evaluate('document.querySelector("#thinking-stream").dataset.empty'), 'true', 'an empty stream is marked empty');
+  assert.match(await evaluate('document.querySelector("#thinking-stream").textContent'), /Nothing yet|does not expose thinking|not connected/, 'the empty state explains itself honestly');
+  assert.match(await evaluate('document.querySelector("[data-testid=thinking-subject]").textContent'), /MAIN · /, 'the subject names the selected agent and its model');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-note]").textContent'), '', 'there is no trim note before any trimming');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-follow]").textContent'), 'FOLLOW ON', 'follow starts on');
+
+  if (app) {
+    const main = app.sessions.get('main');
+    // The fixture numbers its replies by prompt call, so compute the expected text.
+    const firstSample = `Thinking sample ${main.calls.length + 1} · checking the fixture.`;
+    await main.act('prompt', { message: 'stream one' });
+    await until(`document.querySelector("#thinking-stream").textContent.includes(${JSON.stringify(firstSample)})`);
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").textContent'), firstSample, 'the panel streams the agent thinking');
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").dataset.empty'), 'false', 'a stream is no longer empty');
+    main.state.activityMode = 'thinking';
+    main.emit('change');
+    await until(`document.querySelector("[data-testid=thinking-state]").textContent === 'LIVE'`);
+    assert.equal(await evaluate('document.querySelector("[data-testid=thinking-state]").textContent'), 'LIVE', 'the marker goes live while the agent is thinking');
+    main.state.activityMode = 'output';
+    main.emit('change');
+    await until(`document.querySelector("[data-testid=thinking-state]").textContent === 'IDLE'`);
+    assert.equal(await evaluate('document.querySelector("[data-testid=thinking-state]").textContent'), 'IDLE', 'and returns to idle when it stops');
+    assert.equal(await evaluate('document.querySelectorAll(".thinking-content").length'), 0, 'the conversation still shows no thinking');
+    assert.ok(await evaluate('[...document.querySelectorAll(".main-window .message.assistant .message-body")].at(-1).textContent.includes("Review result")'), 'the conversation still renders the answer');
+    // A second state push replaces the stream in place.
+    const secondSample = `Thinking sample ${main.calls.length + 1} · checking the fixture.`;
+    await main.act('prompt', { message: 'stream two' });
+    await until(`document.querySelector("#thinking-stream").textContent.includes(${JSON.stringify(secondSample)})`);
+    assert.ok(!(await evaluate(`document.querySelector("#thinking-stream").textContent.includes(${JSON.stringify(firstSample)})`)), 'the panel shows the newest stream, not a growing pile');
+    // The panel follows the selected agent.
+    await evaluate(`document.querySelector('#add-agent').click()`);
+    const draftId = await evaluate(`[...document.querySelectorAll('[data-window-id]')].map((node) => node.dataset.windowId).filter((id) => String(id).startsWith('draft-')).at(-1)`);
+    assert.ok(draftId, 'a subagent draft appeared for the selection check');
+    await evaluate(`{ const draft = document.querySelector('[data-window-id="${draftId}"]'); draft.querySelector('textarea').value = 'thinking panel child'; draft.querySelector('.draft-body').requestSubmit(); }`);
+    // Wait for the live child window itself, not just the session on the server.
+    let childId = null;
+    for (let attempt = 0; attempt < 120 && !childId; attempt++) {
+      // Match against real sessions: delegated observers also carry a window id.
+      const candidates = [...app.sessions.keys()].filter((id) => id !== 'main');
+      childId = await evaluate(`(() => { const wanted = ${JSON.stringify(candidates)}; const node = [...document.querySelectorAll('[data-window-id]')].find((win) => wanted.includes(win.dataset.windowId)); return node ? node.dataset.windowId : null; })()`);
+      if (!childId) await new Promise((done) => setTimeout(done, 100));
+    }
+    assert.ok(childId && app.sessions.has(childId), `the fixture launched a child for the selection check (draft ${draftId})`);
+    const child = app.sessions.get(childId), childName = child.state.name;
+    // Make the child stream distinguishable so the panel switch is provable.
+    child.state.messages.at(-1).thinking = 'Child reasoning only.';
+    child.emit('change');
+    // Windows focus on pointerdown, and only some carry a bottom-bar button.
+    await evaluate(`document.querySelector('[data-window-id="${childId}"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+    await until(`document.querySelector("[data-testid=thinking-subject]").textContent.includes(${JSON.stringify(childName)})`);
+    assert.match(await evaluate('document.querySelector("[data-testid=thinking-subject]").textContent'), /SUBAGENT · /, 'selecting a child retargets the panel');
+    await until(`document.querySelector("#thinking-stream").textContent === 'Child reasoning only.'`);
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").textContent'), 'Child reasoning only.', 'the panel shows the selected child stream, not the main one');
+    // A child whose model exposes no reasoning says so instead of keeping stale text.
+    child.state.model = { ...child.state.model, reasoning: false };
+    child.state.messages = [];
+    child.emit('change');
+    await until(`document.querySelector("#thinking-stream").textContent === 'This model does not expose thinking.'`);
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").dataset.empty'), 'true', 'the child empty state is marked empty');
+    await evaluate(`document.querySelector('[data-window-id="main"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+    await until(`document.querySelector("[data-testid=thinking-subject]").textContent.includes('Main')`);
+    await until(`document.querySelector("#thinking-stream").textContent === ${JSON.stringify(secondSample)}`);
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").textContent'), secondSample, 'selecting back restores the main stream');
+    // A very long stream is trimmed at the head and says how much was dropped.
+    main.state.messages.at(-1).thinking = `head-marker ${'x'.repeat(200050)} tail-marker`;
+    main.emit('change');
+    await until(`document.querySelector("[data-testid=thinking-note]").textContent.includes('TRIMMED')`);
+    const shown = await evaluate('document.querySelector("#thinking-stream").textContent.length');
+    assert.ok(shown <= 200100, `the trimmed stream stays bounded (${shown} characters)`);
+    const trimmed = await evaluate('document.querySelector("#thinking-stream").textContent');
+    assert.ok(trimmed.includes('earlier thinking trimmed'), 'the trimmed stream says so in place');
+    assert.ok(trimmed.endsWith('tail-marker'), 'the newest reasoning is what is kept');
+    assert.ok(!trimmed.includes('head-marker'), 'the oldest reasoning is what is dropped');
+    assert.match(await evaluate('document.querySelector("[data-testid=thinking-note]").textContent'), /^TRIMMED \/ [\d,]+ EARLIER CHARS$/, 'the note counts what was dropped');
+    main.state.messages.at(-1).thinking = secondSample;
+    main.emit('change');
+    await until(`document.querySelector("[data-testid=thinking-note]").textContent === ''`);
+    assert.equal(await evaluate('document.querySelector("#thinking-stream").textContent'), secondSample, 'the stream is restored after the trim check');
+    // Leave no extra live child behind: the rest of the run counts windows.
+    await evaluate(`window.confirm = () => true; document.querySelector('[data-window-id="${childId}"] button[aria-label="Close subagent window"]').click()`);
+    await until(`document.querySelector('[data-window-id="${childId}"]') === null`);
+  }
+
+  // FOLLOW is a remembered choice.
+  await evaluate('document.querySelector("[data-testid=thinking-follow]").click()');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-follow]").getAttribute("aria-pressed")'), 'false', 'follow can be switched off');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-follow]").textContent'), 'FOLLOW OFF');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:thinking:v1")).follow'), false, 'the follow choice persists');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:thinking:v1")).visible'), true, 'follow and visibility are stored independently');
+  await evaluate('document.querySelector("[data-testid=thinking-follow]").click()');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-follow]").textContent'), 'FOLLOW ON', 'follow can be switched back on');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:thinking:v1")).follow'), true);
+
+  // The settings row hides and shows the panel, and remembers.
+  await evaluate('document.querySelector("#settings").click()');
+  assert.equal(await evaluate('document.querySelector("#settings-dialog").open'), true, 'the settings dialog opens');
+  await evaluate('document.querySelector("[data-testid=settings-thinking]").click()');
+  assert.equal(await evaluate('document.querySelector("#thinking-panel").hidden'), true, 'the settings row hides the panel');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:thinking:v1")).visible'), false, 'the hidden choice persists');
+  await evaluate('document.querySelector("[data-testid=settings-thinking-show]").click()');
+  assert.equal(await evaluate('document.querySelector("#thinking-panel").hidden'), false, 'Show brings the panel back');
+  assert.equal(await evaluate('document.querySelector("#settings-dialog").open'), false, 'Show closes the dialog');
+  assert.equal(await evaluate('document.querySelector("[data-testid=settings-thinking]").checked'), true, 'the row reflects the panel being shown');
+  assert.equal(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:thinking:v1")).visible'), true);
+
   await checkDelegatedBrowser({ app, evaluate, until, rpc });
   await evaluate(`for (const button of document.querySelectorAll('.app-window:not([hidden]) button[aria-label="Minimize window"]')) button.click()`);
   assert.equal(await evaluate('document.querySelectorAll(".app-window:not([hidden])").length'), 0);
@@ -490,6 +607,9 @@ try {
   await until('document.querySelector(".main-window .send")?.disabled === false');
   assert.equal(await evaluate('document.querySelector(".main-window").hidden'), true, 'hidden main stays hidden across reload');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-subagent-index]"), node => Number(node.dataset.subagentIndex)).sort()'), [], 'reload does not manufacture starter drafts');
+  assert.equal(await evaluate('document.querySelector("#thinking-panel").hidden'), false, 'the thinking panel survives a reload while it is stored visible');
+  assert.equal(await evaluate('document.querySelector("[data-testid=thinking-follow]").textContent'), 'FOLLOW ON', 'and its stored follow choice comes back');
+  assert.equal(await evaluate('document.querySelectorAll(".thinking-content").length'), 0, 'still no thinking inside any conversation after a reload');
   const restoredLayouts = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1"))');
   for (const [id, layout] of Object.entries(savedLayouts)) assert.deepEqual(restoredLayouts[id], layout, `${id} layout survives reload`);
   await evaluate('document.querySelector("#tasks button").click()');
@@ -500,7 +620,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, streaming thinking panel, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

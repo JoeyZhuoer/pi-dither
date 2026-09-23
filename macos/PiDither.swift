@@ -28,6 +28,7 @@ final class MotionBridge {
     private var rejected = 0
     private var magnitude = 0.0
     private var openedAt = 0.0
+    private var reportBuffer: UnsafeMutablePointer<UInt8>?
     private(set) var status = "unavailable"
     private var reason = "not started"
     private var source = "none"
@@ -65,6 +66,14 @@ final class MotionBridge {
         })();
         """
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
+    // Contract C1 after a Reload: the user script is re-evaluated with the status it
+    // was built with, so the live value has to be written back into the page.
+    func republish() {
+        lock.lock(); let current = status; lock.unlock()
+        let quoted = current.replacingOccurrences(of: "'", with: "")
+        webView?.evaluateJavaScript("window.__piDitherMotionHost && (window.__piDitherMotionHost.status = '\(quoted)')", completionHandler: nil)
     }
 
     func start(webView: WKWebView) {
@@ -110,12 +119,26 @@ final class MotionBridge {
     func stop() {
         delivery?.invalidate(); delivery = nil
         validation?.invalidate(); validation = nil
-        lock.lock(); let device = self.device; lock.unlock()
-        if let device {
-            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        // The device belongs to the HID run loop: unschedule and close it there,
+        // then let that loop return instead of doing it from the caller's loop.
+        if let runLoop {
+            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) { [weak self] in
+                if let self {
+                    lock.lock(); let device = self.device; let buffer = self.reportBuffer; self.device = nil; self.reportBuffer = nil; lock.unlock()
+                    if let device {
+                        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+                        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+                    }
+                    buffer?.deallocate()
+                }
+                CFRunLoopStop(CFRunLoopGetCurrent())
+            }
+            CFRunLoopWakeUp(runLoop)
+        } else {
+            lock.lock(); let device = self.device; let buffer = self.reportBuffer; self.device = nil; self.reportBuffer = nil; lock.unlock()
+            if let device { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
+            buffer?.deallocate()
         }
-        if let runLoop { CFRunLoopStop(runLoop) }
     }
 
     fileprivate func attach(_ device: IOHIDDevice) {
@@ -130,6 +153,7 @@ final class MotionBridge {
             return
         }
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
+        lock.lock(); reportBuffer = buffer; lock.unlock()
         IOHIDDeviceRegisterInputReportCallback(device, buffer, 64, motionInputReport, Unmanaged.passUnretained(self).toOpaque())
         IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
         lock.lock()
@@ -169,10 +193,8 @@ final class MotionBridge {
     }
 
     private func resolve(_ next: String, _ note: String) {
-        status = next
-        reason = note
+        lock.lock(); status = next; reason = note; let quoted = next.replacingOccurrences(of: "'", with: ""); lock.unlock()
         log()
-        let quoted = next.replacingOccurrences(of: "'", with: "")
         webView?.evaluateJavaScript("window.__piDitherMotionHost && (window.__piDitherMotionHost.status = '\(quoted)')", completionHandler: nil)
     }
 
@@ -507,6 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         }
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        motion.republish()
         if !layoutResetScripts.isEmpty, let url = webView.url, url.scheme == "http", allowed(url) {
             let controller = webView.configuration.userContentController
             let retained = controller.userScripts.filter { script in !layoutResetScripts.contains(where: { $0 === script }) }
@@ -587,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 // must not be reported as if it streamed.
                 var motionTruth = "laptop-motion bridge with live accelerometer samples"
                 if self.motion.status != "available" { motionTruth = "laptop-motion bridge present but no sensor reports delivered on this machine (\(self.motion.status))" }
-                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, window settings, hide/reopen, Reload and unchanged conversation.")
+                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, streaming thinking panel on the right rail, window settings, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

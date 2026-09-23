@@ -238,6 +238,10 @@ async function piDitherSmoke(stage) {
     check(localStorage.getItem('pi-desktop:ground:v1') === '#e58da5', 'default ground restored');
     $('[data-testid="background-theme-reset"]').click();
     check(localStorage.getItem('pi-desktop:theme:v1') === '#e58da5', 'default theme restored');
+    // F3: reasoning streams in the right-rail panel and never inside a window.
+    const thinkingPanel = $('#thinking-panel');
+    check(thinkingPanel && !thinkingPanel.hidden && $('#thinking-stream'), 'the streaming thinking panel is on the right rail');
+    check(!document.querySelector('.conversation details, .thinking-content'), 'no conversation node renders thinking any more');
     $('[data-window-id="background"] button[aria-label="Close utility window"]').click();
     // Window settings (top right): they control the bottom bar. Less frequent
     // windows start out of it, every window stays in the Windows menu, and the

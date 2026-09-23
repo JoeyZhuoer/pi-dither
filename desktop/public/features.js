@@ -407,7 +407,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   const motionStatusText = () => {
     const current = motion();
     if (!current) return 'MOTION / UNAVAILABLE';
-    const providers = { native: 'LAPTOP SENSOR', web: 'BROWSER SENSOR', none: 'NO SENSOR' };
+    const providers = { native: 'LAPTOP SENSOR', web: 'BROWSER EVENTS', none: 'NO SENSOR' };
     const trouble = current.status === 'denied' ? 'ACCESS DENIED' : current.status === 'unavailable' ? 'UNAVAILABLE' : '';
     // A provider that has not delivered anything yet is reported as waiting: the
     // app never claims a rate it has not measured (a browser exposes the event

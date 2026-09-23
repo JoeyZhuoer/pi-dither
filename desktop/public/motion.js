@@ -39,6 +39,13 @@ export const MOTION_SETTLE = .05;
 // here is all it takes if a sensor reports its axes differently.
 export const MOTION_AXES = { right: ['x', 1], front: ['y', 1] };
 
+// Contract C1 status values only: a host must not be able to inject arbitrary
+// text (or claim 'available' by leaving the field out) into the status line.
+export function motionStatus(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return text === 'available' || text === 'denied' ? text : 'unavailable';
+}
+
 export function motionMode(value) {
   const mode = String(value ?? '').trim().toLowerCase();
   return Object.hasOwn(MOTION_MODES, mode) ? mode : 'off';
@@ -167,9 +174,11 @@ export function createMotion({ provider, storage, document: doc = globalThis.doc
 
   function discover() {
     const host = hostProvider();
-    if (host) return { source: 'native', status: String(host.status ?? 'available'), subscribe: (handler) => host.subscribe(handler) };
+    if (host) return { source: 'native', status: motionStatus(host.status), subscribe: (handler) => host.subscribe(handler) };
     const target = view();
     if (target && typeof target.DeviceMotionEvent === 'function' && typeof target.addEventListener === 'function') {
+      // The constructor existing is not a sensor: features.js labels this source
+      // BROWSER EVENTS and shows WAITING until a sample actually arrives.
       return { source: 'web', status: 'available', subscribe: null };
     }
     return { source: 'none', status: 'none', subscribe: null };
@@ -238,7 +247,7 @@ export function createMotion({ provider, storage, document: doc = globalThis.doc
     // Re-discover on every switch-on: a host injected after the app started (or a
     // machine whose sensor appears later) must win over the browser fallback.
     if (enabling) connect();
-    if (mode === 'off') { state.input = null; state.shake = 0; }
+    if (mode === 'off') { state.input = null; state.shake = 0; state.x = 0; state.y = 0; state.vx = 0; state.vy = 0; }
     else if (enabling) rezero();
     return mode;
   }
