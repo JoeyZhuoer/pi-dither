@@ -13,9 +13,11 @@ function sequence(seed = 1) {
 }
 
 function frame() {
-  const calls = { clearRect: 0, beginPath: 0, stroke: 0, fillRect: 0, strokeRect: 0, moveTo: 0, lineTo: 0, styles: [] };
+  const calls = { clearRect: 0, beginPath: 0, stroke: 0, fillRect: 0, strokeRect: 0, moveTo: 0, lineTo: 0, putImageData: 0, styles: [] };
   const ctx = {
     lineWidth: 1, strokeStyle: '', fillStyle: '',
+    createImageData(width, height) { return { width, height, data: new Uint8ClampedArray(width * height * 4) }; },
+    putImageData(image, x = 0, y = 0) { calls.putImageData++; calls.image = image; calls.x = x; calls.y = y; },
     clearRect() { calls.clearRect++; },
     beginPath() { calls.beginPath++; },
     moveTo() { calls.moveTo++; }, lineTo() { calls.lineTo++; },
@@ -101,6 +103,9 @@ test('links and drawing follow the constellation rules', () => {
 
 // A synthetic photo sample: a dark disc on white, plus a tinted half, so both
 // the ink mask and the sampled colours can be checked.
+
+// A synthetic photo sample: a dark disc on white, plus a tinted half, so both
+// the ink mask and the sampled colours can be checked.
 function photoSample(size = 40) {
   const data = new Uint8ClampedArray(size * size * 4);
   const center = size / 2;
@@ -119,7 +124,7 @@ test('particle modes and the cloud pointer keep the reference constants', () => 
   assert.deepEqual(PARTICLE_CHOICES.map(([value]) => value), ['off', 'sparse', 'normal', 'dense']);
   assert.deepEqual(CLOUD_CHOICES.map(([value]) => value), ['push', 'pull']);
   assert.equal(particleMode('photo'), 'off', 'legacy photo modes are no longer particle modes');
-  assert.equal(PHOTO_POINTS, 20000, '20k point cloud');
+  assert.equal(PHOTO_POINTS, 200_000, '200k point cloud');
   assert.equal(PHOTO_SIZE, 3, '3px dots');
   assert.equal(CLOUD_POINTERS.push, -100, 'the site default spread');
   assert.equal(CLOUD_POINTERS.pull, 40, 'the site gather');
@@ -153,59 +158,61 @@ test('the photo becomes a centred, deterministic point cloud with sampled colour
     assert.ok(cloud.points[at + 1] >= -20 && cloud.points[at + 1] <= 20, 'y is centred and Y-up');
     assert.ok(Math.abs(cloud.points[at + 2]) <= 1, 'small depth');
     assert.equal(cloud.points[at + 6], 1, 'opaque targets');
-    const red = cloud.points[at + 3], green = cloud.points[at + 4], blue = cloud.points[at + 5];
     // Float32 storage rounds a hair above the double-precision fraction; compare bytes.
+    const red = cloud.points[at + 3], green = cloud.points[at + 4], blue = cloud.points[at + 5];
     assert.ok(Math.round(red * 255) <= 200 && Math.round(green * 255) <= 20 && Math.round(blue * 255) <= 30, 'colours come from the photo');
   }
   assert.deepEqual(photoCloud(sample, { max: 200, random: sequence(9) }), cloud, 'deterministic');
   assert.equal(photoCloud({ data: new Uint8ClampedArray(16 * 16 * 4).fill(255), width: 16, height: 16 }, { max: 50 }).count, 0, 'a white photo has no cloud');
   assert.equal(photoCloud(null).count, 0);
   assert.ok(photoCloud(sample, { max: 40 }).count <= 40, 'max is respected');
+  assert.ok(PHOTO_POINTS > 100_000, 'the default sampling target is large');
 });
 
 test('stepPhotoCloud mirrors the site: spring home plus a signed 1/(1+d)^2 force', () => {
   const cloud = { count: 1, points: Float32Array.from([100, 0, 0, .25, .5, .75, 1]) };
-  const make = () => [{ pointIdx: 0, speed: 20, x: 0, y: 0, z: 0, r: .5, g: .5, b: .5, a: -1 }];
+  // A deterministic one-particle pool at the origin (z -1), speed 20, faded out.
+  const make = () => createPhotoPool(1, 0, 0, () => 0);
   const home = make();
   stepPhotoCloud(home, cloud);
-  assert.ok(Math.abs(home[0].x - 5) < 1e-9, 'eases 1/speed toward the target');
-  assert.ok(Math.abs(home[0].r - (.5 + (.25 - .5) / 20)) < 1e-9, 'colour eases too');
-  assert.ok(home[0].a > -1 && home[0].a < 1, 'alpha eases toward the target');
+  assert.ok(Math.abs(home.positions[0] - 5) < 1e-9, 'eases 1/speed toward the target');
+  assert.ok(Math.abs(home.colors[0] - (.5 + (.25 - .5) / 20)) < 1e-6, 'colour eases too'); // float32 buffer
+  assert.ok(home.colors[3] > -1 && home.colors[3] < 1, 'alpha eases toward the target');
   // Spread pushes away from the pointer (negative strength), gather pulls to it.
   const spread = make(), gather = make();
   stepPhotoCloud(spread, cloud, { pointer: { x: 10, y: 0 }, strength: CLOUD_POINTERS.push });
   stepPhotoCloud(gather, cloud, { pointer: { x: 10, y: 0 }, strength: CLOUD_POINTERS.pull });
-  assert.ok(spread[0].x < 0, `spread pushes away (${spread[0].x.toFixed(2)})`);
-  assert.ok(gather[0].x > home[0].x, `gather pulls past the spring (${gather[0].x.toFixed(2)})`);
+  assert.ok(spread.positions[0] < 0, `spread pushes away (${spread.positions[0].toFixed(2)})`);
+  assert.ok(gather.positions[0] > home.positions[0], `gather pulls past the spring (${gather.positions[0].toFixed(2)})`);
   for (let step = 0; step < 400; step++) stepPhotoCloud(gather, cloud, { pointer: null });
-  assert.ok(Math.abs(gather[0].x - 100) < .01 && Math.abs(gather[0].a - 1) < 1e-6, 'the cloud settles exactly');
+  assert.ok(Math.abs(gather.positions[0] - 100) < .01 && Math.abs(gather.colors[3] - 1) < 1e-6, 'the cloud settles exactly');
   // Surplus particles fade out to alpha -1 like the site's unused pool.
-  const pool = make(); pool.push({ pointIdx: 1, speed: 20, x: 0, y: 0, z: 0, r: .5, g: .5, b: .5, a: 1 });
+  const pool = createPhotoPool(2, 0, 0, () => 0);
   stepPhotoCloud(pool, cloud);
-  assert.ok(pool[1].a < 1, 'the extra particle fades out');
+  assert.ok(pool.colors[7] < 1, 'the extra particle fades out');
   for (let step = 0; step < 400; step++) stepPhotoCloud(pool, cloud);
-  assert.ok(pool[1].a < -.99, 'and reaches invisible');
+  assert.ok(pool.colors[7] < -.99, 'and reaches invisible');
 });
 
-test('drawPhotoCloud paints tinted pixel dots with a pointer parallax', () => {
+test('drawPhotoCloud writes tinted dots into a reusable frame buffer', () => {
   const { ctx, calls } = frame();
-  const pool = [
-    { pointIdx: 0, speed: 20, x: 10, y: 20, z: 0, r: 1, g: 0, b: 0, a: 1 },
-    { pointIdx: 1, speed: 20, x: 30, y: 40, z: 0, r: 0, g: 1, b: 0, a: 0 },
-  ];
   const cloud = { count: 1, points: new Float32Array(7) };
-  assert.equal(drawPhotoCloud(ctx, pool, cloud), true);
-  assert.equal(calls.fillRect, 1, 'invisible and surplus dots are skipped');
-  // Colours are cached in 32-level buckets, so the red dot lands near pure red.
-  const [drawnRed, drawnGreen, drawnBlue, drawnAlpha] = ctx.fillStyle.match(/[\d.]+/g).map(Number);
-  assert.ok(drawnRed >= 248 && drawnGreen <= 8 && drawnBlue <= 8 && drawnAlpha === 1, `quantized red dot (${ctx.fillStyle})`);
-  const offset = (pointer) => {
-    const local = frame();
-    drawPhotoCloud(local.ctx, [{ pointIdx: 0, speed: 20, x: 10, y: 20, z: 1, r: 1, g: 1, b: 1, a: 1 }], cloud, { pointer, centerX: 0, centerY: 0 });
-    const [, x, y] = local.calls.rects[0];
-    return [x, y];
-  };
-  const neutral = offset(null), shifted = offset({ x: 100, y: 50 });
-  assert.ok(shifted[0] > neutral[0] && shifted[1] > neutral[1], 'depth parallax follows the pointer');
+  const pixel = (image, x, y) => Array.from(image.data.slice((y * image.width + x) * 4, (y * image.width + x) * 4 + 4));
+  const pool = createPhotoPool(2, 0, 0, () => 0);
+  pool.colors.set([1, 0, 0, 1, 0, 1, 0, 0]);
+  const buffer = { width: 8, height: 6, image: ctx.createImageData(8, 6) };
+  assert.equal(drawPhotoCloud(ctx, pool, cloud, { width: 8, height: 6, buffer }), true);
+  assert.equal(calls.putImageData, 1, 'one buffer upload per frame');
+  assert.deepEqual(pixel(buffer.image, 0, 0), [255, 0, 0, 255], 'the opaque dot is painted');
+  assert.deepEqual(pixel(buffer.image, 5, 3), [0, 0, 0, 0], 'surplus/transparent points are skipped');
+  // The depth parallax shifts dots with the pointer.
+  const parallax = createPhotoPool(1, 0, 0, () => 0);
+  parallax.colors[3] = 1; parallax.positions[2] = 1;
+  const shift = { width: 20, height: 20, image: ctx.createImageData(20, 20) };
+  drawPhotoCloud(ctx, parallax, cloud, { width: 20, height: 20, buffer: shift, centerX: 0, centerY: 0, pointer: { x: 100, y: 50 } });
+  assert.deepEqual(pixel(shift.image, 3, 2), [128, 128, 128, 255], 'the pointer depth parallax shifts the dot');
+  drawPhotoCloud(ctx, parallax, cloud, { width: 20, height: 20, buffer: shift, centerX: 0, centerY: 0 });
+  assert.deepEqual(pixel(shift.image, 3, 2), [0, 0, 0, 0], 'without the pointer it sits at its home pixel');
   assert.equal(drawPhotoCloud(null, pool, cloud), false);
+  assert.equal(drawPhotoCloud({}, pool, cloud), false, 'no 2D context means no work');
 });
