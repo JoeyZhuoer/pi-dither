@@ -1,6 +1,220 @@
 import AppKit
 import WebKit
 import UniformTypeIdentifiers
+import IOKit.hid
+
+
+// The laptop-motion sensor. macOS exposes the Apple SPU accelerometer as a HID
+// device (page 0xFF00, usage 3, transport SPU, 22-byte reports), but it withholds
+// its reports from unprivileged processes on some machines: `accel`, `gyro` and
+// `devmotion6` never stream here while the light sensors do. The bridge therefore
+// never claims success on noise — `available` requires input reports whose resting
+// magnitude really is about 1 g — and reports `unavailable`/`denied` otherwise, so
+// the interface stays honest and the app is unaffected either way.
+final class MotionBridge {
+    private weak var webView: WKWebView?
+    private var manager: IOHIDManager?
+    private var device: IOHIDDevice?
+    private var runLoop: CFRunLoop?
+    private var started = false
+    private var delivery: Timer?
+    private var validation: Timer?
+    private let lock = NSLock()
+    private var latest: (x: Double, y: Double, z: Double, at: Double)?
+    private var previous: (x: Double, y: Double, z: Double)?
+    private var pending = false
+    private var peak = 0.0
+    private var samples = 0
+    private var rejected = 0
+    private var magnitude = 0.0
+    private var openedAt = 0.0
+    private(set) var status = "unavailable"
+    private var reason = "not started"
+    private var source = "none"
+
+    // Contract C1: the host object exists before any page script runs, keeps
+    // latest/peak/status current even with no subscriber, and is never assumed to
+    // have been defined by the page.
+    func script() -> WKUserScript {
+        let source = """
+        (() => {
+          if (window.__piDitherMotionHost && window.__piDitherMotionHost.version === 1) return;
+          const listeners = new Set();
+          window.__piDitherMotionHost = {
+            version: 1,
+            status: "\(status)",
+            latest: null,
+            peak: 0,
+            subscribe(callback) {
+              if (typeof callback !== "function") return () => {};
+              listeners.add(callback);
+              return () => listeners.delete(callback);
+            },
+            deliver(sample) {
+              if (!sample || typeof sample !== "object") return false;
+              const x = Number(sample.x), y = Number(sample.y), z = Number(sample.z);
+              if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+              const at = Number.isFinite(Number(sample.at)) ? Number(sample.at) : Date.now();
+              const peak = Number.isFinite(Number(sample.peak)) ? Number(sample.peak) : 0;
+              this.latest = { x: x, y: y, z: z, at: at };
+              this.peak = peak;
+              for (const callback of Array.from(listeners)) { try { callback({ x: x, y: y, z: z, at: at, peak: peak }); } catch (error) {} }
+              return true;
+            }
+          };
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
+    func start(webView: WKWebView) {
+        guard !started else { return }
+        started = true
+        self.webView = webView
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        let matches: [[String: Any]] = [[
+            kIOHIDPrimaryUsagePageKey as String: 0xFF00,
+            kIOHIDPrimaryUsageKey as String: 3,
+            kIOHIDTransportKey as String: "SPU",
+        ]]
+        IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, motionDeviceMatched, context)
+        IOHIDManagerRegisterInputReportCallback(manager, motionInputReport, context)
+        self.manager = manager
+        let thread = Thread { [weak self] in
+            guard let self, let manager = self.manager else { return }
+            self.runLoop = CFRunLoopGetCurrent()
+            IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+            let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+            if opened != kIOReturnSuccess {
+                self.resolve(opened == kIOReturnNotPermitted || opened == kIOReturnExclusiveAccess ? "denied" : "unavailable",
+                             "HID manager open failed (\(opened))")
+            }
+            CFRunLoopRun()
+        }
+        thread.name = "pi-dither-motion"
+        thread.stackSize = 512 * 1024
+        thread.start()
+        delivery = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.deliver() }
+        // A sensor that has not produced one plausible resting reading by now is
+        // not usable: say so instead of pretending it is running.
+        validation = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+            guard let self, self.status != "available" else { return }
+            self.resolve("unavailable", self.source == "none"
+                ? "no accelerometer matched (page 0xFF00 usage 3, transport SPU)"
+                : "no validated input reports from \(self.source): the system withheld the sensor from this process")
+        }
+    }
+
+    func stop() {
+        delivery?.invalidate(); delivery = nil
+        validation?.invalidate(); validation = nil
+        lock.lock(); let device = self.device; lock.unlock()
+        if let device {
+            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+        if let runLoop { CFRunLoopStop(runLoop) }
+    }
+
+    fileprivate func attach(_ device: IOHIDDevice) {
+        let product = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "?"
+        let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? "?"
+        lock.lock(); let already = self.device != nil; lock.unlock()
+        guard !already else { return }
+        let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        guard opened == kIOReturnSuccess else {
+            resolve(opened == kIOReturnNotPermitted || opened == kIOReturnExclusiveAccess ? "denied" : "unavailable",
+                    "device open failed (\(opened)) for \(product)")
+            return
+        }
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
+        IOHIDDeviceRegisterInputReportCallback(device, buffer, 64, motionInputReport, Unmanaged.passUnretained(self).toOpaque())
+        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
+        lock.lock()
+        self.device = device
+        source = "\(product)/\(transport)"
+        reason = "waiting for input reports"
+        openedAt = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
+    }
+
+    // Three little-endian Float32 in g. A resting accelerometer reads about 1 g, so
+    // the first accepted sample has to be plausible before anything is claimed.
+    fileprivate func ingest(x: Double, y: Double, z: Double, at: Double) {
+        guard x.isFinite, y.isFinite, z.isFinite else { return }
+        let size = (x * x + y * y + z * z).squareRoot()
+        guard size > 0.02, size < 8 else { lock.lock(); rejected += 1; lock.unlock(); return }
+        lock.lock()
+        let first = status != "available"
+        if first && !(size >= 0.5 && size <= 1.6) { rejected += 1; lock.unlock(); return }
+        if first {
+            magnitude = size
+            openedAt = at
+        } else {
+            magnitude += (size - magnitude) * 0.05
+        }
+        if let previous {
+            let dx = x - previous.x, dy = y - previous.y, dz = z - previous.z
+            let delta = (dx * dx + dy * dy + dz * dz).squareRoot()
+            if delta > peak { peak = delta }
+        }
+        previous = (x, y, z)
+        latest = (x, y, z, at)
+        samples += 1
+        pending = true
+        lock.unlock()
+        if first { resolve("available", String(format: "validated %.3f g at rest", size)) }
+    }
+
+    private func resolve(_ next: String, _ note: String) {
+        status = next
+        reason = note
+        log()
+        let quoted = next.replacingOccurrences(of: "'", with: "")
+        webView?.evaluateJavaScript("window.__piDitherMotionHost && (window.__piDitherMotionHost.status = '\(quoted)')", completionHandler: nil)
+    }
+
+    private func deliver() {
+        lock.lock()
+        guard pending, let sample = latest else { lock.unlock(); return }
+        let burst = peak
+        pending = false
+        peak = 0
+        lock.unlock()
+        // One JSON literal per delivery, at most 60 times a second.
+        let payload = String(format: "{\"x\":%.6f,\"y\":%.6f,\"z\":%.6f,\"at\":%.3f,\"peak\":%.4f}",
+                             sample.x, sample.y, sample.z, sample.at * 1000, burst)
+        webView?.evaluateJavaScript("window.__piDitherMotionHost && window.__piDitherMotionHost.deliver(\(payload))", completionHandler: nil)
+    }
+
+    private func log() {
+        lock.lock()
+        let count = samples, skipped = rejected, resting = magnitude, device = source, startedAt = openedAt
+        lock.unlock()
+        let seconds = ProcessInfo.processInfo.systemUptime - startedAt
+        let rate = count > 1 && seconds > 0 ? Double(count) / seconds : 0
+        print("Motion bridge: status=\(status) device=\(device) samples=\(count) rejected=\(skipped) rate=\(String(format: "%.1f", rate))Hz |a|=\(String(format: "%.3f", resting))g reason=\(reason)")
+        fflush(stdout)
+    }
+}
+
+private func motionDeviceMatched(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ device: IOHIDDevice) {
+    guard let context else { return }
+    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue().attach(device)
+}
+
+private func motionInputReport(_ context: UnsafeMutableRawPointer?, _ result: IOReturn, _ sender: UnsafeMutableRawPointer?, _ type: IOHIDReportType, _ reportID: UInt32, _ report: UnsafeMutablePointer<UInt8>, _ length: CFIndex) {
+    guard let context, length >= 12 else { return }
+    func value(_ offset: Int) -> Double {
+        var word: UInt32 = 0
+        for index in 0..<4 { word |= UInt32(report[offset + index]) << (8 * UInt32(index)) }
+        return Double(Float(bitPattern: word))
+    }
+    Unmanaged<MotionBridge>.fromOpaque(context).takeUnretainedValue()
+        .ingest(x: value(0), y: value(4), z: value(8), at: ProcessInfo.processInfo.systemUptime)
+}
 
 // The web UI is local content inside a native application, not a browser launch.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
@@ -22,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     let smoke = ProcessInfo.processInfo.arguments.contains("--smoke-test")
     let resetWindowLayout = ProcessInfo.processInfo.arguments.contains("--reset-window-layout")
     var layoutResetScripts: [WKUserScript] = []
+    let motion = MotionBridge()
     var smokePassed = false
     var smokeFailure = false
     var smokeReloading = false
@@ -29,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
         let config = WKWebViewConfiguration()
+        config.userContentController.addUserScript(motion.script())
         // Fixed local origin + normal store keep layout preferences. Test
         // instances use an ephemeral web store as well as an isolated Pi profile.
         if smoke {
@@ -152,6 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 startupTimer?.invalidate(); localURL = url
                 if resetWindowLayout { prepareLayoutReset(port: port) }
                 webView.load(URLRequest(url: url))
+                motion.start(webView: webView)
             case "status":
                 guard waitingToQuit && !shuttingDown else { continue }
                 quitTimer?.invalidate()
@@ -188,7 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
     func shutdown() {
         guard !shuttingDown else { return }
-        shuttingDown = true; startupTimer?.invalidate(); quitTimer?.invalidate(); smokeTimer?.invalidate()
+        shuttingDown = true; startupTimer?.invalidate(); quitTimer?.invalidate(); smokeTimer?.invalidate(); motion.stop()
         send("shutdown")
         try? input?.fileHandleForWriting.close()
         // SIGTERM follows the same graceful cleanup handler; never blindly kill
@@ -365,7 +582,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 self.window.setContentSize(size)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.runSmokeStage(name) }
             } else {
-                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, particle field, window settings, hide/reopen, Reload and unchanged conversation.")
+                // State the sensor truth in the pass line itself: the bridge is present
+                // either way, but a machine whose system withholds the accelerometer
+                // must not be reported as if it streamed.
+                var motionTruth = "laptop-motion bridge with live accelerometer samples"
+                if self.motion.status != "available" { motionTruth = "laptop-motion bridge present but no sensor reports delivered on this machine (\(self.motion.status))" }
+                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, window settings, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

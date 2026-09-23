@@ -5,6 +5,7 @@ import {
   cloudPointer, cloudStrength, createField, createPhotoPool, drawField, drawPhotoCloud, linkPairs, particleCount, particleMode, photoCloud,
   readCloudPointer, readParticles, stepField, stepPhotoCloud, writeCloudPointer, writeParticles,
 } from '../desktop/public/particles.js';
+import { MOTION_SHAKE } from '../desktop/public/motion.js';
 
 // Small deterministic PRNG so physics tests never flake.
 function sequence(seed = 1) {
@@ -125,7 +126,7 @@ test('particle modes and the cloud pointer keep the reference constants', () => 
   assert.deepEqual(CLOUD_CHOICES.map(([value]) => value), ['push', 'pull']);
   assert.equal(particleMode('photo'), 'off', 'legacy photo modes are no longer particle modes');
   assert.equal(PHOTO_POINTS, 800_000, '800k point cloud');
-  assert.equal(PHOTO_SIZE, 1, 'a 1px dot');
+  assert.equal(PHOTO_SIZE, 2, 'a 2px dot');
   assert.equal(CLOUD_RADIUS, 480, 'the pointer only reaches CLOUD_RADIUS');
   assert.equal(CLOUD_FALLOFF, 2, 'smooth quadratic window');
   assert.equal(CLOUD_STIFFNESS, 1.5, 'the force per pixel of distance is capped');
@@ -278,7 +279,71 @@ test('drawPhotoCloud writes tinted dots into a reusable frame buffer', () => {
   assert.equal(drawPhotoCloud({}, pool, cloud), false, 'no 2D context means no work');
 });
 
-test('the default dot is a single pixel', () => {
+test('sway shifts every target so the whole cloud leans and springs back', () => {
+  const width = 2000, height = 400;
+  const cloud = { count: 2, points: Float32Array.from([
+    700 - width / 2, 0, 0, 1, 1, 1, 1,
+    1600 - width / 2, 0, 0, 1, 1, 1, 1,
+  ]) };
+  const pool = createPhotoPool(2, 0, 0, () => 0);
+  pool.positions.set([cloud.points[0], 0, 0, cloud.points[7], 0, 0]);
+  pool.colors.set([1, 1, 1, 1, 1, 1, 1, 1]);
+  const buffer = { width, height, image: frame().ctx.createImageData(width, height) };
+  const ink = () => {
+    let inked = 0, sumX = 0;
+    const data = buffer.image.data;
+    for (let i = 3; i < data.length; i += 4) { if (data[i] <= 8) continue; const index = i >> 2; const x = index % width; inked++; sumX += x; }
+    return { inked, cx: sumX / (inked || 1) };
+  };
+  const options = { width, height, buffer, centerX: width / 2, centerY: height / 2, size: 2 };
+  drawPhotoCloud(frame().ctx, pool, cloud, options);
+  const home = ink();
+  for (let step = 0; step < 240; step++) stepPhotoCloud(pool, cloud, { sway: { x: 90, y: 0 } });
+  assert.ok(Math.abs(pool.positions[0] - (cloud.points[0] + 90)) < .01, `the point settles on target + sway (${pool.positions[0].toFixed(2)})`);
+  assert.ok(Math.abs(pool.positions[3] - (cloud.points[7] + 90)) < .01, 'every point leans, not one region');
+  // A sway of 0 is the unchanged path: exactly the target, no rounding drift.
+  for (let step = 0; step < 240; step++) stepPhotoCloud(pool, cloud, { sway: { x: 0, y: 0 } });
+  assert.ok(Math.abs(pool.positions[0] - cloud.points[0]) < .01, 'and it springs home when the sway ends');
+  assert.ok(Math.abs(pool.positions[0] - home.cx) >= 0);
+});
+
+test('shake bursts the cloud outward from its centre and decays', () => {
+  const cloud = { count: 3, points: Float32Array.from([40, 0, 0, 1, 1, 1, 1, -40, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1]) };
+  const pool = createPhotoPool(3, 0, 0, () => 0);
+  pool.positions.set([cloud.points[0], 0, 0, cloud.points[7], 0, 0, 0, 0, 0]);
+  pool.colors.set([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  stepPhotoCloud(pool, cloud, { shake: 1, seconds: 1 / 60 });
+  assert.ok(pool.positions[0] > cloud.points[0], `a point right of the centre is pushed right (${pool.positions[0].toFixed(2)})`);
+  assert.ok(pool.positions[3] < cloud.points[7], 'and a point left of it is pushed left');
+  // One step at full shake is the documented peak radial speed, MOTION_SHAKE px/s.
+  assert.ok(Math.abs((pool.positions[0] - cloud.points[0]) - MOTION_SHAKE / 60) < 1e-5, `the burst rate is MOTION_SHAKE per second (${(pool.positions[0] - cloud.points[0]).toFixed(4)} px/step)`);
+  assert.ok(Math.abs(pool.positions[5]) < 1e-6, 'a point at the centre is not flung');
+  // The two points pull back to their homes once the burst is over.
+  for (let step = 0; step < 400; step++) stepPhotoCloud(pool, cloud, { shake: 0, seconds: 1 / 60 });
+  assert.ok(Math.abs(pool.positions[0] - cloud.points[0]) < .05 && Math.abs(pool.positions[3] - cloud.points[7]) < .05, 'the burst settles back home');
+});
+
+test('the no-motion step is the same maths as before the hook', () => {
+  // Hand-computed reference for the spring-only path: ease 1/20, no force.
+  const cloud = { count: 1, points: Float32Array.from([100, 50, 0, .4, .5, .6, 1]) };
+  const pool = createPhotoPool(1, 0, 0, () => 0);
+  pool.positions.set([40, 10, 0]);
+  pool.colors.set([.1, .2, .3, 0]);
+  const ease = 1 / 20;
+  stepPhotoCloud(pool, cloud);
+  assert.ok(Math.abs(pool.positions[0] - (40 + (100 - 40) * ease)) < 1e-6, 'x follows the plain spring');
+  assert.ok(Math.abs(pool.positions[1] - (10 + (50 - 10) * ease)) < 1e-6, 'y follows the plain spring');
+  assert.ok(Math.abs(pool.colors[3] - (0 + (1 - 0) * ease)) < 1e-6, 'alpha follows the plain ease');
+  // Undefined sway and zero shake must not perturb a single bit.
+  const same = createPhotoPool(1, 0, 0, () => 0);
+  same.positions.set([40, 10, 0]);
+  same.colors.set([.1, .2, .3, 0]);
+  stepPhotoCloud(same, cloud, { sway: undefined, shake: 0 });
+  assert.deepEqual(Array.from(same.positions), Array.from(pool.positions), 'sway undefined and shake 0 are byte-identical');
+  assert.deepEqual(Array.from(same.colors), Array.from(pool.colors), 'including colour and alpha');
+});
+
+test('the default dot is a 2px square per point', () => {
   const { ctx } = frame();
   const cloud = { count: 2, points: new Float32Array(14) };
   const pool = createPhotoPool(2, 0, 0, () => 0);
@@ -288,10 +353,11 @@ test('the default dot is a single pixel', () => {
   drawPhotoCloud(ctx, pool, cloud, { width: 20, height: 12, buffer, centerX: 10, centerY: 6 });
   let inked = 0;
   for (let i = 3; i < buffer.image.data.length; i += 4) if (buffer.image.data[i] > 8) inked++;
-  assert.equal(inked, 2, 'exactly one pixel per visible point');
+  assert.equal(inked, 8, 'four pixels per visible point');
   const pixel = (x, y) => Array.from(buffer.image.data.slice((y * 20 + x) * 4, (y * 20 + x) * 4 + 3));
-  assert.deepEqual(pixel(10, 6), [255, 255, 255], 'the point at the centre is one pixel');
-  assert.deepEqual(pixel(15, 3), [255, 255, 255], 'so is the second point');
+  assert.deepEqual(pixel(9, 5), [255, 255, 255], 'the top-left corner of the centre dot');
+  assert.deepEqual(pixel(10, 6), [255, 255, 255], 'the bottom-right corner of the centre dot');
+  assert.deepEqual(pixel(11, 5), [0, 0, 0], 'and nothing beyond two pixels');
 });
 
 test('stepPhotoCloud reports when the drawn frame is already up to date', () => {

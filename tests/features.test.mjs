@@ -294,10 +294,11 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
   const windowsSource = await readFile(new URL('../desktop/public/windows.js', import.meta.url));
   const backgroundSource = await readFile(new URL('../desktop/public/background.js', import.meta.url));
   const particlesSource = await readFile(new URL('../desktop/public/particles.js', import.meta.url));
+  const motionSource = await readFile(new URL('../desktop/public/motion.js', import.meta.url));
   const comboSource = await readFile(new URL('../desktop/public/combobox.js', import.meta.url));
   const server = createServer((req, res) => {
     res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : req.url === '/features.css' ? 'text/css' : 'text/html');
-    res.end(req.url === '/combobox.js' ? comboSource : req.url === '/features.js' ? source : req.url === '/windows.js' ? windowsSource : req.url === '/background.js' ? backgroundSource : req.url === '/particles.js' ? particlesSource : req.url === '/features.css' ? css : '<!doctype html><title>Feature fixture</title><link rel="stylesheet" href="/features.css"><main id="desktop"></main>');
+    res.end(req.url === '/combobox.js' ? comboSource : req.url === '/features.js' ? source : req.url === '/windows.js' ? windowsSource : req.url === '/background.js' ? backgroundSource : req.url === '/particles.js' ? particlesSource : req.url === '/motion.js' ? motionSource : req.url === '/features.css' ? css : '<!doctype html><title>Feature fixture</title><link rel="stylesheet" href="/features.css"><main id="desktop"></main>');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const profile = await mkdtemp(join(tmpdir(), 'pi-feature-test-'));

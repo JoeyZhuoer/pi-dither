@@ -7,6 +7,7 @@
 // and everything springs home when it leaves.
 // Physics helpers are pure (randomness is injected) so tests need no browser.
 import { backgroundSize, ditherPhoto } from './background.js';
+import { createMotion, MOTION_SHAKE } from './motion.js';
 
 export const PARTICLES_KEY = 'pi-desktop:particles:v1';
 export const CLOUD_POINTER_KEY = 'pi-desktop:cloud-pointer:v1';
@@ -16,7 +17,9 @@ export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal'
 export const CLOUD_POINTERS = { push: -100, pull: 40 };
 export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
 export const PHOTO_POINTS = 800_000;
-export const PHOTO_SIZE = 1;
+// 2px squares: four pixels per point, so the same 800k points read denser and
+// cost roughly four times the draw writes of a 1px dot.
+export const PHOTO_SIZE = 2;
 export const PHOTO_SPEED = [20, 30];
 // The site's force is 1/(1+d)² with no limit, which keeps tugging the whole
 // canvas. Window it with (1 - d/r)² so the pull/push is strongest at the cursor,
@@ -255,8 +258,15 @@ export function createPhotoPool(count, width, height, random = Math.random) {
 
 // One frame of the reference site's motion: ease toward the assigned point with
 // s = 1/speed, plus the signed pointer force strength * (pointer - p) / (1+d)².
-export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0, strength = cloudStrength('push') } = {}) {
+// `sway` (cloud pixels, undefined = none) shifts every target so a moving machine
+// leans the whole cloud; `shake` (0..1) adds a radial impulse from the cloud's
+// centre. Both are optional and cost nothing when absent.
+export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0, strength = cloudStrength('push'), sway, shake, seconds = 1 / 60 } = {}) {
   const count = cloud?.count ?? 0, points = cloud?.points;
+  const swayX = Number(sway?.x) || 0, swayY = Number(sway?.y) || 0;
+  const hasSway = swayX !== 0 || swayY !== 0;
+  const shakeAmount = Math.min(1, Math.max(0, Number(shake) || 0));
+  const dt = Math.min(.05, Math.max(0, Number(seconds) || 0));
   // The canvas pointer is Y-down and measured from the top-left; cloud points
   // live in the centred, Y-up frame the photo was sampled in.
   const pointerX = pointer ? pointer.x - centerX : 0;
@@ -285,14 +295,27 @@ export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0,
         stiffness = Math.min(CLOUD_STIFFNESS, Math.abs(strength) * window / (1 + distance) / (1 + distance)) * Math.sign(strength);
         forceX = stiffness * gapX;
         forceY = stiffness * gapY;
-      } else if (positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
-    } else if (positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
-    let stepX = (targetX - positions[at]) * ease + forceX;
-    let stepY = (targetY - positions[at + 1]) * ease + forceY;
+      } else if (!hasSway && shakeAmount === 0 && positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
+    } else if (!hasSway && shakeAmount === 0 && positions[at] === targetX && positions[at + 1] === targetY && colors[colorAt + 3] === points[targetAt + 6]) continue;
+    // A sway moves every target, so the whole cloud leans and springs back.
+    const restX = hasSway ? targetX + swayX : targetX;
+    const restY = hasSway ? targetY + swayY : targetY;
+    let stepX = (restX - positions[at]) * ease + forceX;
+    let stepY = (restY - positions[at + 1]) * ease + forceY;
     let alphaStep = (points[targetAt + 6] - colors[colorAt + 3]) * ease;
     if (stiffness) {   // only a forced point needs the damping divide
       const damp = 1 + (stiffness > 0 ? stiffness : -stiffness);
       stepX /= damp; stepY /= damp; alphaStep /= damp;
+    }
+    if (shakeAmount > 0) {
+      // A shake bursts the cloud outward from its centre: a radial speed of
+      // MOTION_SHAKE px/s at full shake, integrated over this step.
+      const distance = Math.hypot(positions[at], positions[at + 1]);
+      if (distance > 1) {
+        const push = MOTION_SHAKE * shakeAmount * dt / distance;
+        stepX += positions[at] * push;
+        stepY += positions[at + 1] * push;
+      }
     }
     positions[at] += stepX;
     positions[at + 1] += stepY;
@@ -371,7 +394,7 @@ export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY
 // Renders only; owns the one animation frame loop, pauses when hidden or when
 // the system asks for reduced motion, and stops entirely when there is nothing
 // to draw. `photo(width, height)` supplies the image sample for the point cloud.
-export function createParticles({ canvas, storage, photo, document: doc = canvas?.ownerDocument ?? globalThis.document, random } = {}) {
+export function createParticles({ canvas, storage, photo, motion, document: doc = canvas?.ownerDocument ?? globalThis.document, random } = {}) {
   const view = () => doc?.defaultView ?? globalThis;
   const media = view()?.matchMedia?.('(prefers-reduced-motion: reduce)');
   const source = typeof random === 'function' ? random : Math.random;
@@ -379,6 +402,9 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
   let field = null, pool = null, cloud = null, resizeTimer = null;
   const frameBuffer = { width: 0, height: 0, image: null };
   let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false, dirty = true;
+  // Laptop motion (off unless the user enables it): a sample only wakes the loop
+  // while the mode is on. `motion` may be injected for tests.
+  const motionController = motion ?? createMotion({ storage, document: doc, onSample: () => { if (motionController.mode !== 'off' && !suspended()) wake(); } });
   const ctx = canvas?.getContext?.('2d');
   const now = () => view()?.performance?.now?.() ?? Date.now();
   const active = () => !disposed && (Boolean(cloud) || (mode !== 'off' && Boolean(field)));
@@ -446,7 +472,9 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
       while (accumulator >= 1 / 60) {
         accumulator -= 1 / 60;
         stepped = true;
-        if (stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, strength: cloudStrength(pointerMode) })) moving = true;
+        if (motionController.step(1 / 60)) moving = true;
+        const sway = motionController.mode === 'off' ? undefined : motionController.sway;
+        if (stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, strength: cloudStrength(pointerMode), sway, shake: motionController.mode === 'off' ? 0 : motionController.shake })) moving = true;
       }
     }
     if (moving) dirty = true;
@@ -499,6 +527,22 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     get mode() { return mode; },
     get cloudPointer() { return pointerMode; },
     get hasCloud() { return Boolean(cloud); },
+    get motion() { return motionController; },
+    // The Appearance window drives motion through here so the render loop always
+    // picks the change up: the sway target moved, so the cloud has to step again.
+    setMotionMode(value) {
+      const next = motionController.setMode(value);
+      draw();
+      unschedule(frame); frame = null;
+      if (!suspended()) wake();
+      return next;
+    },
+    rezeroMotion() {
+      const baseline = motionController.rezero();
+      unschedule(frame); frame = null;
+      if (!suspended()) wake();
+      return baseline;
+    },
     setMode(value) {
       mode = writeParticles(storage, value);
       resize();
@@ -524,6 +568,7 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     },
     destroy() {
       disposed = true;
+      motionController.destroy();
       if (resizeTimer) clearTimeout(resizeTimer);
       unschedule(frame); frame = null;
       doc?.removeEventListener?.('pointermove', onPointerMove);

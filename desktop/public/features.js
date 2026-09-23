@@ -1,6 +1,7 @@
 import { syncCombobox } from './combobox.js';
 import { DEFAULT_GROUND, DEFAULT_THEME } from './background.js';
 import { CLOUD_CHOICES, PARTICLE_CHOICES } from './particles.js';
+import { MOTION_CHOICES } from './motion.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
@@ -353,6 +354,12 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   photoInput.accept = 'image/*';
   const particleInput = field(backgroundForm, 'Particles', 'background-particles', 'select');
   const cloudInput = field(backgroundForm, 'Cloud pointer', 'background-cloud', 'select');
+  // Laptop motion: the accelerometer leans the cloud, an acceleration makes it lag
+  // and a shake bursts it. Off by default and inert without a sensor.
+  const motionInput = field(backgroundForm, 'Motion', 'background-motion', 'select');
+  const motionStatus = node('p', null, 'motion-status');
+  motionStatus.dataset.testid = 'background-motion-status';
+  backgroundForm.append(motionStatus);
   const usesBackground = () => !!background;
   const themeDefault = button('Default theme', 'background-theme-reset', () => {
     if (!background) return;
@@ -369,9 +376,18 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     background.clearPhoto(); photoInput.value = '';
     message(backgroundPanel, 'Photo removed. The colours stay.');
   });
-  backgroundForm.append(themeDefault, groundDefault, photoRemove);
+  const motionZero = button('Re-zero motion', 'background-motion-rezero', () => {
+    if (!particles) return;
+    particles.rezeroMotion();
+    message(backgroundPanel, 'Motion re-zeroed: the current resting position is level.');
+    renderMotionStatus();
+  });
+  backgroundForm.append(themeDefault, groundDefault, photoRemove, motionZero);
   for (const element of [themeInput, groundInput, photoInput, themeDefault, groundDefault, photoRemove]) guard(element, usesBackground);
   guard(particleInput, () => !!particles); guard(cloudInput, () => !!particles);
+  const motion = () => particles?.motion;
+  guard(motionInput, () => !!particles);
+  guard(motionZero, () => { const current = motion(); return !!current && current.mode !== 'off'; });
   on(themeInput, 'input', () => { if (background) background.setTheme(themeInput.value); });
   on(themeInput, 'change', () => { if (background) message(backgroundPanel, `Theme colour ${background.state.theme}.`); });
   on(groundInput, 'input', () => { if (background) background.setGround(groundInput.value); });
@@ -385,6 +401,40 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (!particles) return;
     choices(cloudInput, CLOUD_CHOICES, cloudInput.value);
     message(backgroundPanel, `The pointer now ${particles.setCloudPointer(cloudInput.value) === 'pull' ? 'pulls' : 'pushes'} the photo cloud.`);
+  });
+  // Truthful sensor state: which provider answered and the measured sample rate
+  // (0 until samples arrive), never a claim that a sensor exists when it does not.
+  const motionStatusText = () => {
+    const current = motion();
+    if (!current) return 'MOTION / UNAVAILABLE';
+    const providers = { native: 'LAPTOP SENSOR', web: 'BROWSER SENSOR', none: 'NO SENSOR' };
+    const trouble = current.status === 'denied' ? 'ACCESS DENIED' : current.status === 'unavailable' ? 'UNAVAILABLE' : '';
+    // A provider that has not delivered anything yet is reported as waiting: the
+    // app never claims a rate it has not measured (a browser exposes the event
+    // type whether or not the machine has a sensor).
+    const signal = current.source === 'none' ? '' : ` \u00b7 ${current.rate ? `${current.rate} HZ` : current.count ? 'MEASURING' : 'WAITING'}`;
+    return `MOTION / ${current.mode.toUpperCase()} \u00b7 ${providers[current.source] || 'NO SENSOR'}${trouble ? ` ${trouble}` : ''}${signal}`;
+  };
+  const renderMotionStatus = () => { motionStatus.textContent = motionStatusText(); controls(); };
+  // The measured rate only stays live if something re-renders it: agent state is
+  // pushed on change, so an idle desktop would keep an old reading. One bounded
+  // ticker, and only while this window is open with motion switched on.
+  let motionTicker = 0;
+  const syncMotionTicker = () => {
+    if (disposed) return;
+    const current = motion();
+    const wanted = visible('background') && !!current && current.mode !== 'off';
+    if (wanted && !motionTicker) motionTicker = setInterval(renderMotionStatus, 1000);
+    else if (!wanted && motionTicker) { clearInterval(motionTicker); motionTicker = 0; }
+  };
+  on(motionInput, 'change', () => {
+    if (!particles) return;
+    const next = particles.setMotionMode(motionInput.value);
+    choices(motionInput, MOTION_CHOICES, next);
+    message(backgroundPanel, next === 'off' ? 'Motion is off.'
+      : `Motion ${next}: tip or move the machine and the cloud leans${next === 'full' ? ', lags behind a push and bursts on a shake' : ''}. Re-zero makes the current position level.`);
+    renderMotionStatus();
+    syncMotionTicker();
   });
   on(photoInput, 'change', () => {
     const file = photoInput.files && photoInput.files[0];
@@ -403,7 +453,9 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (particles) {
       choices(particleInput, PARTICLE_CHOICES, particles.mode);
       choices(cloudInput, CLOUD_CHOICES, particles.cloudPointer);
+      choices(motionInput, MOTION_CHOICES, particles.motion.mode);
     }
+    renderMotionStatus();
   };
 
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.
@@ -614,6 +666,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
       // Metadata refresh is explicit for models; opening it never mutates an agent.
       if (shown && !previous && state.connected && id !== 'models') void panel.refresh?.();
     }
+    syncMotionTicker();
   }
   const unsubscribe = windows.onChange(windowChanges);
   let contextSignature = JSON.stringify([state.cwd, agents().map((agent) => [agent.id, agent.sessionId])]);
@@ -652,6 +705,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     dispose() {
       if (disposed) return;
       disposed = true; events.abort(); unsubscribe(); apiKey.value = ''; diffGeneration++;
+      if (motionTicker) { clearInterval(motionTicker); motionTicker = 0; }
       for (const panel of panels.values()) { panel.generation++; panel.root.remove(); }
       guards.clear(); activityNodes.clear(); toolInputs.clear();
       // DesktopWindows shells and persisted layout remain owned by the host.
