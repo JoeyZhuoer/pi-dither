@@ -16,8 +16,18 @@ export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal'
 export const CLOUD_POINTERS = { push: -100, pull: 40 };
 export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
 export const PHOTO_POINTS = 200_000;
-export const PHOTO_SIZE = 3;
+export const PHOTO_SIZE = 1;
 export const PHOTO_SPEED = [20, 30];
+// The site's force is 1/(1+d)² with no limit, which keeps tugging the whole
+// canvas. Window it with (1 - d/r)² so the pull/push is strongest at the cursor,
+// matches the site's curve up close, then fades smoothly to exactly nothing at
+// CLOUD_RADIUS instead of reaching across the desk.
+export const CLOUD_RADIUS = 480;
+export const CLOUD_FALLOFF = 2;
+// Cap the force per pixel of distance. The site's 1/(1+d)² term is 40x stiffer
+// than the spring right at the cursor, so the gather overshoots every frame and
+// never settles; 1.5 keeps the push/drift feel and makes both modes converge.
+export const CLOUD_STIFFNESS = 1.5;
 export const LINK_DISTANCE = 90;
 export const INK = '#20201f';
 const MAX_PARTICLES = 400;
@@ -221,22 +231,35 @@ export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0,
   // live in the centred, Y-up frame the photo was sampled in.
   const pointerX = pointer ? pointer.x - centerX : 0;
   const pointerY = pointer ? centerY - pointer.y : 0;
+  const reach = CLOUD_RADIUS * CLOUD_RADIUS;
   for (let index = 0; index < pool.count; index++) {
     const ease = 1 / speeds[index];
     const at = index * 3, colorAt = index * 4;
     if (index >= count || !points) { colors[colorAt + 3] += (-1 - colors[colorAt + 3]) * ease; continue; }
     const targetAt = index * 7;
     const targetX = points[targetAt], targetY = points[targetAt + 1], targetZ = points[targetAt + 2];
-    let forceX = 0, forceY = 0;
+    let forceX = 0, forceY = 0, stiffness = 0;
     if (pointer) {
       const gapX = pointerX - positions[at], gapY = pointerY - positions[at + 1];
-      const distance = Math.hypot(gapX, gapY);
-      const falloff = 1 / (1 + distance) / (1 + distance);
-      forceX = strength * gapX * falloff;
-      forceY = strength * gapY * falloff;
+      // Beyond the radius there is no force at all: no far-field drift, and the
+      // squared test keeps 200k points cheap.
+      const distanceSquared = gapX * gapX + gapY * gapY;
+      if (distanceSquared < reach) {
+        const distance = Math.sqrt(distanceSquared);
+        const window = (1 - distance / CLOUD_RADIUS) ** CLOUD_FALLOFF;
+        // The site's curve 1/(1+d)², squared away by the window and pulled in by
+        // the stiffness cap, so the pull/push decays smoothly and stays stable.
+        stiffness = Math.min(CLOUD_STIFFNESS, Math.abs(strength) * window / (1 + distance) / (1 + distance)) * Math.sign(strength);
+        forceX = stiffness * gapX;
+        forceY = stiffness * gapY;
+      }
     }
-    positions[at] += (targetX - positions[at]) * ease + forceX;
-    positions[at + 1] += (targetY - positions[at + 1]) * ease + forceY;
+    // Damp the whole step by (1 + |k|): the site adds the force undamped, which
+    // makes the gather's fixed point repelling (it oscillates forever). Damping
+    // leaves every fixed point identical but makes it attracting.
+    const damp = 1 + Math.abs(stiffness);
+    positions[at] += ((targetX - positions[at]) * ease + forceX) / damp;
+    positions[at + 1] += ((targetY - positions[at + 1]) * ease + forceY) / damp;
     positions[at + 2] += (targetZ - positions[at + 2]) * ease;
     colors[colorAt] += (points[targetAt + 3] - colors[colorAt]) * ease;
     colors[colorAt + 1] += (points[targetAt + 4] - colors[colorAt + 1]) * ease;

@@ -126,14 +126,16 @@ try {
     assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--ground").trim()'), '#123456');
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:ground:v1")'), '#123456');
     assert.equal(await evaluate('getComputedStyle(document.body).backgroundColor'), 'rgb(18, 52, 86)', 'the desk uses the chosen ground colour');
-    // A synthetic half-black/half-white photo becomes the point cloud.
+    // A synthetic checkerboard becomes the point cloud: ink everywhere, so both a
+    // box near the cursor and a box in the corner have points to move.
     await evaluate(`(async () => {
-      const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#fff'; x.beginPath(); x.arc(32, 32, 20, 0, Math.PI * 2); x.fill(); c.toBlob(resolve, 'image/png'); });
+      const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#000'; for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) if ((row + col) % 2) x.fillRect(col * 8, row * 8, 8, 8); c.toBlob(resolve, 'image/png'); });
       const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'cloud.png', { type: 'image/png' }));
       const input = document.querySelector('[data-testid="background-photo"]');
       input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
     await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), null, 'push is the default without a stored choice');
     const cloudStats = `(() => {
       const c = document.querySelector('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
       let inked = 0, sumX = 0, sumY = 0;
@@ -146,6 +148,16 @@ try {
     })()`;
     const cloudHash = `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i] ^ d[i + 3], 16777619); return h; })()`;
     const cloudShift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+    const settleForced = async (label) => {
+      let previous = null;
+      for (let i = 0; i < 100; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const next = await evaluate(cloudStats);
+        if (previous && Math.abs(next.inked - previous.inked) <= Math.max(20, previous.inked * .002) && cloudShift(next, previous) < .2) return next;
+        previous = next;
+      }
+      assert.fail(`the forced cloud did not settle: ${label}`);
+    };
     const stableCloud = async (label) => {
       let last = await evaluate(cloudHash);
       for (let i = 0; i < 100; i++) {
@@ -168,24 +180,64 @@ try {
     const cloudCanvas = await evaluate('(() => { const c = document.querySelector("#particles"); return { width: c.width, height: c.height }; })()');
     assert.ok(Math.abs(home.cx - cloudCanvas.width / 2) < cloudCanvas.width * .05, `the cloud sits on the canvas centre (cx ${home.cx.toFixed(1)} of ${cloudCanvas.width})`);
     assert.ok(Math.abs(home.cy - cloudCanvas.height / 2) < cloudCanvas.height * .05, `the cloud sits on the canvas centre (cy ${home.cy.toFixed(1)} of ${cloudCanvas.height})`);
-    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }))`);
-    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) > 2`);
-    assert.ok(cloudShift(await evaluate(cloudStats), home) > 2, 'the pointer displaces the cloud');
+    // The pointer force is bounded to CLOUD_RADIUS (480px). The parallax tilt only
+    // depends on the cursor position, so putting the cursor exactly on the canvas
+    // centre (tilt 0) means push and pull can only differ through the force. Boxes
+    // are compared by statistics, not pixels: a 200k-dot cloud keeps creeping
+    // sub-pixel for seconds, so a few thousand dots flip pixel edges on their own.
+    const regionStats = (x, y, size) => `(() => {
+      const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(${x}, ${y}, ${size}, ${size}).data;
+      let inked = 0, sumX = 0, sumY = 0;
+      for (let i = 3; i < d.length; i += 4) {
+        if (d[i] <= 8) continue;
+        const index = i >> 2, px = index % ${size};
+        inked++; sumX += px; sumY += (index - px) / ${size};
+      }
+      return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
+    })()`;
+    const sameRegion = (a, b) => Math.abs(a.inked - b.inked) <= Math.max(20, a.inked * .01) && Math.hypot(a.cx - b.cx, a.cy - b.cy) < .5;
+    const untilRegion = async (expression, target, label) => {
+      for (let i = 0; i < 100; i++) {
+        const now = await evaluate(expression);
+        if (sameRegion(now, target)) return now;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      assert.fail(`the region did not settle: ${label}`);
+    };
+    // Cursor on the canvas centre keeps the tilt at zero; the near box is offset to
+    // stay inside the radius with ink in it.
+    const cursor = { x: cloudCanvas.width / 2, y: cloudCanvas.height / 2 }, box = 200;
+    const near = { x: cursor.x + 140, y: cursor.y + 60 };
+    const nearStats = regionStats(near.x - box / 2, near.y - box / 2, box);
+    const farStats = regionStats(cloudCanvas.width - box, cloudCanvas.height - box, box);
+    const homeNear = await evaluate(nearStats), homeFar = await evaluate(farStats);
+    assert.ok(Math.hypot(near.x + box / 2 - cursor.x, near.y + box / 2 - cursor.y) < 480, 'the near box is inside the cloud radius');
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: ${cursor.x}, clientY: ${cursor.y}, bubbles: true }))`);
+    await settleForced('the push settles');
+    const pushedNear = await evaluate(nearStats), pushedFar = await evaluate(farStats);
+    assert.ok(!sameRegion(pushedNear, homeNear), 'the push reaches the points around the cursor');
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'pull'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    await settleForced('the pull settles');
+    const pulledNear = await evaluate(nearStats), pulledFar = await evaluate(farStats);
+    assert.ok(!sameRegion(pulledNear, pushedNear), 'pull rearranges the points around the cursor');
+    assert.ok(sameRegion(pulledFar, pushedFar), 'no force reaches beyond CLOUD_RADIUS in either direction');
+    assert.ok(sameRegion(pushedFar, homeFar), 'and the far box never leaves home');
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'push'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
     await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
-    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) < 3`);
+    await untilRegion(nearStats, homeNear, 'the stirred box springs home');
     await stableCloud('the cloud springs home');
     const settled = await evaluate(cloudStats);
-    assert.ok(cloudShift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
-    const settledHash = await evaluate(cloudHash);
+    assert.ok(Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
+    assert.ok(sameRegion(await evaluate(farStats), homeFar), 'and the far box is still home');
     // The signed force switch mirrors the site's push/pull modes.
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), null, 'push is the default without a stored choice');
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), 'push', 'the chosen direction persists');
     await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'pull'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), 'pull', 'the pull variant persists');
-    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }))`);
-    // The pull gathers mass toward the cursor, so compare pixels rather than the centroid.
-    await until(`${cloudHash} !== ${settledHash}`);
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: ${cursor.x}, clientY: ${cursor.y}, bubbles: true }))`);
+    await settleForced('the pull stirs again');
+    assert.ok(!sameRegion(await evaluate(nearStats), homeNear), 'the pull moves the cloud');
     await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
-    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) < 3`);
+    await untilRegion(nearStats, homeNear, 'the pull springs home');
     await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'push'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
     // Extra drifting field on top of the cloud.
     const cloudOnly = (await evaluate(cloudStats)).inked;

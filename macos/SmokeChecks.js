@@ -57,10 +57,11 @@ async function piDitherSmoke(stage) {
     check(localStorage.getItem('pi-desktop:ground:v1') === '#123456', 'ground colour persists');
     check(getComputedStyle(document.documentElement).getPropertyValue('--ground').trim() === '#123456', 'ground colour applies to the desk');
     const photo = $('[data-testid="background-photo"]');
-    const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#fff'; x.beginPath(); x.arc(32, 32, 20, 0, Math.PI * 2); x.fill(); c.toBlob(resolve, 'image/png'); });
+    const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#000'; for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) if ((row + col) % 2) x.fillRect(col * 8, row * 8, 8, 8); c.toBlob(resolve, 'image/png'); });
     const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
     photo.files = transfer.files; photo.dispatchEvent(new Event('change', { bubbles: true }));
     await wait(() => localStorage.getItem('pi-desktop:photo:v1') !== null, 'photo stored');
+    check(!localStorage.getItem('pi-desktop:cloud-pointer:v1'), 'push is the default without a stored choice');
     // Cloud statistics: ink count plus the centroid of the drawn points.
     const stats = () => {
       const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
@@ -74,7 +75,7 @@ async function piDitherSmoke(stage) {
     };
     const cloudHash = () => { const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i] ^ data[i + 3], 16777619); return hash; };
     const shift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
-    // 200k 3px dots keep entering and leaving pixel rows while the cloud is
+    // 200k dots keep entering and leaving pixel rows while the cloud is
     // still relaxing, so the raw ink count wobbles a few percent. Wait for a
     // frame that repeats before capturing any baseline.
     const stableCloud = async (label) => {
@@ -96,26 +97,66 @@ async function piDitherSmoke(stage) {
     await stableCloud('the cloud forms');
     const home = stats();
     document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }));
-    await wait(() => shift(stats(), home) > 2, 'the pointer pushes the cloud');
-    check(shift(stats(), home) > 2, 'the pointer displaces the cloud');
+    // The force is bounded by CLOUD_RADIUS. The parallax tilt only depends on the
+    // cursor, so a cursor exactly on the canvas centre (tilt 0) means push and pull
+    // can only differ through the force. Boxes are compared by statistics, not by
+    // pixels: a 200k-dot cloud creeps sub-pixel for seconds after forming, so a few
+    // thousand dots flip pixel edges on their own.
+    const regionStats = (x, y, size) => {
+      const d = $('#particles').getContext('2d').getImageData(x, y, size, size).data;
+      let inked = 0, sumX = 0, sumY = 0;
+      for (let i = 3; i < d.length; i += 4) {
+        if (d[i] <= 8) continue;
+        const index = i >> 2, px = index % size;
+        inked++; sumX += px; sumY += (index - px) / size;
+      }
+      return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
+    };
+    const sameRegion = (a, b) => Math.abs(a.inked - b.inked) <= Math.max(20, a.inked * .01) && Math.hypot(a.cx - b.cx, a.cy - b.cy) < .5;
+    const canvas = $('#particles'), box = 200;
+    const cursor = { x: canvas.width / 2, y: canvas.height / 2 };
+    const near = { x: cursor.x + 140, y: cursor.y + 60 };
+    const nearStats = () => regionStats(near.x - box / 2, near.y - box / 2, box);
+    const farStats = () => regionStats(canvas.width - box, canvas.height - box, box);
+    const homeNear = nearStats(), homeFar = farStats();
+    check(Math.hypot(near.x + box / 2 - cursor.x, near.y + box / 2 - cursor.y) < 480, 'the near box sits inside the cloud radius');
+    check(Math.hypot(canvas.width - box - cursor.x, canvas.height - box - cursor.y) > 520, 'the far box sits outside the cloud radius');
+    // A held pointer balances the spring against the force, so settle on
+    // statistics rather than a frame hash.
+    const settleForced = async (label) => {
+      let previous = null;
+      for (let i = 0; i < 100; i++) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        const next = stats();
+        if (previous && Math.abs(next.inked - previous.inked) <= Math.max(20, previous.inked * .002) && shift(next, previous) < .2) return;
+        previous = next;
+      }
+      throw new Error('Native feature condition did not settle: ' + label);
+    };
+    const waitRegion = async (read, target, label) => {
+      for (let i = 0; i < 100; i++) { if (sameRegion(read(), target)) return; await new Promise(resolve => setTimeout(resolve, 250)); }
+      throw new Error('Native feature condition did not settle: ' + label);
+    };
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: cursor.x, clientY: cursor.y, bubbles: true }));
+    await settleForced('the push settles');
+    const pushedNear = nearStats(), pushedFar = farStats();
+    check(!sameRegion(pushedNear, homeNear), 'the pointer displaces the cloud around the cursor');
+    $('[data-testid="background-cloud"]').value = 'pull';
+    $('[data-testid="background-cloud"]').dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:cloud-pointer:v1') === 'pull', 'the pull variant persists');
+    await settleForced('the pull settles');
+    check(!sameRegion(nearStats(), pushedNear), 'pull rearranges the points around the cursor');
+    check(sameRegion(farStats(), pushedFar) && sameRegion(pushedFar, homeFar), 'no force reaches beyond CLOUD_RADIUS in either direction');
+    $('[data-testid="background-cloud"]').value = 'push';
+    $('[data-testid="background-cloud"]').dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:cloud-pointer:v1') === 'push', 'push restores');
     document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
-    await wait(() => shift(stats(), home) < 3, 'the cloud springs home');
+    await waitRegion(nearStats, homeNear, 'the cloud springs home');
     await stableCloud('the cloud springs home');
     const settled = stats();
+    check(sameRegion(nearStats(), homeNear) && sameRegion(farStats(), homeFar), 'the stirred region springs back to its home shape');
     check(shift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03),
       `the cloud springs back to its home shape [home ${home.inked}@${home.cx.toFixed(1)},${home.cy.toFixed(1)} → settled ${settled.inked}@${settled.cx.toFixed(1)},${settled.cy.toFixed(1)}]`);
-    const settledHash = cloudHash();
-    // The signed force switch mirrors the site's push/pull modes.
-    check(!localStorage.getItem('pi-desktop:cloud-pointer:v1'), 'push is the default without a stored choice');
-    const cloudSelect = $('[data-testid="background-cloud"]');
-    cloudSelect.value = 'pull'; cloudSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:cloud-pointer:v1') === 'pull', 'the pull variant persists');
-    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }));
-    // The pull gathers mass toward the cursor, so compare pixels rather than the centroid.
-    await wait(() => cloudHash() !== settledHash, 'pull moves the cloud');
-    document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
-    await wait(() => shift(stats(), home) < 3, 'pull springs home');
-    cloudSelect.value = 'push'; cloudSelect.dispatchEvent(new Event('change', { bubbles: true }));
     // Extra drifting field on top of the cloud.
     const particleSelect = $('[data-testid="background-particles"]');
     const cloudOnly = stats().inked;
