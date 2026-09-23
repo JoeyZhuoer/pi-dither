@@ -610,7 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 // must not be reported as if it streamed.
                 var motionTruth = "laptop-motion bridge with live accelerometer samples"
                 if self.motion.status != "available" { motionTruth = "laptop-motion bridge present but no sensor reports delivered on this machine (\(self.motion.status))" }
-                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, streaming thinking panel on the right rail, window settings, hide/reopen, Reload and unchanged conversation.")
+                print("PASS: native feature checks — nine utilities, roomy opening with a narrow main floor, native resize, manual layouts, maximize, draft controls, menus, appearance colours, photo point cloud with reference-site push/pull and spring-back, " + motionTruth + ", synthetic lean and knock, particle field, in-window reasoning, window settings, hide/reopen, Reload and unchanged conversation.")
                 self.smokePassed = true; self.shutdown()
             }
         }

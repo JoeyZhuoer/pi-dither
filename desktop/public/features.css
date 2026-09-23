@@ -1,6 +1,6 @@
 .feature-window{flex:1;min-height:0;min-width:0;overflow:auto;padding:10px 12px 18px;background:var(--paper,#f5f5f1);color:var(--ink,#20201f);font:19px/1.25 var(--pixel,monospace);scrollbar-width:thin;overscroll-behavior:contain}
 .feature-window .feature-toolbar,.feature-window .feature-form,.feature-window .feature-row{display:flex;align-items:end;flex-wrap:wrap;gap:8px;margin-bottom:10px}
-.feature-window .feature-toolbar{border-bottom:1px solid #969693;padding-bottom:9px}
+.feature-window .feature-toolbar{padding-bottom:9px}
 .feature-window .feature-field{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1 1 150px}
 .feature-window .feature-field>span{font-size:17px;text-transform:uppercase}
 /* Motion status: the sensor the app actually reached and the measured sample rate. */
@@ -10,10 +10,10 @@
 .feature-window input[type=password],.feature-window input[type=text]{font:13px/1.4 var(--code,monospace)}
 .feature-window button{font-size:18px;white-space:normal;min-height:32px}
 .feature-window .feature-section{border:1px solid #aaa;background:#e7e7e3;padding:9px;margin:10px 0;min-width:0}
-.feature-window h3{font:normal 23px/1.1 var(--pixel,monospace);margin:0 0 9px;border-bottom:1px solid #aaa;padding-bottom:5px}
+.feature-window h3{font:normal 23px/1.1 var(--pixel,monospace);margin:0 0 12px}
 .feature-window h4{font:normal 19px/1.2 var(--pixel,monospace);margin:12px 0 6px}
 .feature-window p,.feature-window li,.feature-window .feature-row>span{overflow-wrap:anywhere;white-space:pre-wrap}
-.feature-window .feature-row{align-items:center;border-bottom:1px dotted #aaa;padding:5px 0}
+.feature-window .feature-row{align-items:center;padding:7px 0}
 .feature-window .feature-row>span{flex:1 1 180px;min-width:0}
 .feature-window .feature-status{min-height:1.25em;font-size:17px;margin:0 0 8px}
 .feature-window .feature-error{color:#852332;background:#efc8d1;border:1px solid #9e344d;padding:6px}
@@ -32,3 +32,6 @@
 .feature-window .feature-tool input{flex:0 0 20px;margin:2px 0}
 .feature-window .feature-tool-caption{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
 .feature-window .feature-tool-description{font:13px/1.4 var(--code,monospace);white-space:pre-wrap}
+
+/* Feature windows keep only functional borders: their own frame, controls and genuine boxes.
+   The heading, toolbar and row separators were removed in this wave; spacing carries the rhythm. */

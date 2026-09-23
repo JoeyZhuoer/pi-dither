@@ -48,15 +48,6 @@
     <div class="utility-title">Pi Dither <span>0.4</span></div>
     <div class="about-content"><span class="pi-glyph" aria-hidden="true">π</span><p>Local tools. Open-ended thought.<br>One main thread. Room for others.</p></div>
   </aside>
-  <aside id="thinking-panel" class="thinking-widget" aria-label="Streaming agent thinking" hidden>
-    <div class="utility-title">Thinking <span id="thinking-state" data-testid="thinking-state">OFFLINE</span></div>
-    <p id="thinking-subject" class="thinking-subject" data-testid="thinking-subject">No agent selected</p>
-    <div id="thinking-stream" class="thinking-stream" data-testid="thinking-stream" tabindex="0" aria-label="Thinking stream for the selected agent"></div>
-    <div class="thinking-foot">
-      <button type="button" id="thinking-follow" class="thinking-follow" data-testid="thinking-follow" aria-pressed="true">FOLLOW ON</button>
-      <span id="thinking-note" class="thinking-note" data-testid="thinking-note"></span>
-    </div>
-  </aside>
   <aside id="usage-diagram" class="usage-widget" aria-label="Selected agent usage"></aside>
   <footer class="taskbar"><span class="taskbar-label">WINDOWS /</span><div id="tasks"></div><span id="fleet-count">0 ACTIVE</span></footer>
   <div id="toast" role="status" aria-live="polite" hidden></div>
@@ -64,19 +55,19 @@
     <div class="utility-title">Desktop / Field guide</div>
     <div class="help-body">
       <h2>Your main agent gets the big window.</h2>
-      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Windows open at the narrowest usable width with a medium height—main, children, observers and utilities have their own minimum widths—and they only get taller or shorter with the app when you have not resized them yourself. Any manual resize is saved for that window. Hidden windows stay hidden. Arrange resets the layout.</p>
-      <p>The desktop usage chart follows the selected agent: input, output, cache, reported cost and context occupancy. Click its heading for details. Unknown usage is shown as —; provisional turn usage is not added to session totals.</p>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Any manual resize is saved for that window. Hidden windows stay hidden. Arrange resets the layout.</p>
+      <p>The desktop usage chart follows the selected agent. Click its heading for details.</p>
       <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
-      <p><strong>No empty subagent windows are created at startup.</strong> Use + Subagent to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools—no concurrent file writers. Their results can be inserted into the main draft for your review.</p>
-      <p>The main agent defaults to Pi's filesystem and shell tools. This local interface is not a sandbox. Model requests use your configured Pi provider. Authentication stays on the server.</p>
-      <p>Use <strong>Windows</strong> for the windows you keep, and the <strong>⚙</strong> button on the right to choose which of them appear in the bottom bar and to open any of them; the choice is remembered. The same dialog can hide the <strong>Thinking</strong> panel on the right rail, where the selected agent's reasoning streams while the conversation keeps only the answer. The Appearance window holds the theme colour, the ground colour and the dithered photo. Closing a feature window hides it. Minimizing an agent never stops its work.</p>
-      <p>Provider key overrides last only for this server lifetime. Archive hides a saved session without deleting it. Workspace/session/provider changes require idle agents.</p>
-      <p>This release does not attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom providers, session-tree editing and images remain terminal features. Installed Pi packages load for the main agent; project-local <code>.pi</code> resources stay untrusted.</p>
-      <p>The main agent loads every package configured in your Pi profile, so installed tools (for example web search) and pi-subagents load normally; a bundled pi-subagents fallback is used when the profile does not configure one. Its delegated agents follow their configured permissions. Automatic DELEGATED observer windows appear on the right in the former Scout/Review positions and show their available live output and results without launching extra agents. Closing an observer only dismisses the view; use the extension to stop its task. Minimize keeps it in the taskbar. Tools shows loaded packages and load errors; restart the app after installing one.</p>
-      <p>Expand <strong>Inspection</strong> in a subagent window for its available assigned/delivered prompt, tool-call previews, attributed file-change evidence, tokens, cost and elapsed wall time. Unknown is not zero. Live counters stay provisional until final usage is reported; some upstream prompts and async metrics are unavailable. Shared workspace Git changes are not attributed to a child.</p>
+      <p>Use <strong>+ Subagent</strong> to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools.</p>
+      <p>The main agent defaults to Pi's filesystem and shell tools.</p>
+      <p>Use <strong>Windows</strong> for the windows you keep, and the <strong>⚙</strong> button on the right to choose which of them appear in the bottom bar and to open any of them. The Appearance window holds the theme colour, the ground colour and the background photo. Closing a feature window hides it. Minimizing an agent keeps its work running.</p>
+      <p>Workspace, session and provider changes require idle agents.</p>
+      <p>Installed Pi packages load for the main agent; project-local <code>.pi</code> resources stay untrusted.</p>
+      <p>Automatic DELEGATED observer windows show their live output and results. Minimize keeps it in the taskbar. Tools shows loaded packages and load errors; restart the app after installing one.</p>
+      <p>Expand <strong>Inspection</strong> in a subagent window for its assigned/delivered prompt, tool-call previews, file-change evidence, tokens, cost and elapsed wall time.</p>
       <p>Dropdown controls and their menus use the same retro style. Arrows/Home/End navigate, Enter/Space selects, Escape or Tab cancels tentative changes, and typing searches options. The native select remains the form's source of truth.</p>
-      <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools; main can use every tool from the packages installed in your Pi profile, while manual desktop subagents can only select from their read-only catalog.</p>
-      <p>Window types have distinct size presets; your manual layout wins. The desktop chrome and ground colours are yours in <strong>Appearance</strong>, along with an optional photo that is stored locally and never uploaded. The photo becomes a <strong>point cloud</strong> background: moving the pointer pushes or pulls it with the same spring-and-force motion as the reference field, and it settles back exactly when the pointer leaves. The same window can add an extra drifting particle field, whose dots link and collide while it drifts.</p>
+      <p>Tools selections change only the selected session after explicit Apply. Select none to disable all tools.</p>
+      <p>Window types have distinct size presets; your manual layout wins. <strong>Appearance</strong> holds the colours, the background photo and the extra particle field.</p>
       <form method="dialog"><button class="primary">Understood</button></form>
     </div>
   </dialog>
@@ -84,7 +75,7 @@
     <div class="utility-title">Window settings <span>TOP RIGHT</span></div>
     <div class="help-body">
       <h2>Choose your bottom bar.</h2>
-      <p>Tick a window to keep its button in the bottom bar; untick to hide it there. Every window stays in the <strong>Windows</strong> menu, and <strong>Open</strong> shows it right away. The choice is remembered.</p>
+      <p>Tick a window to keep its button in the bottom bar; untick to hide it there. Every window stays in the <strong>Windows</strong> menu, and <strong>Open</strong> shows it right away.</p>
       <div id="settings-list" class="settings-list"></div>
       <form method="dialog"><button class="primary">Done</button></form>
     </div>

@@ -21,11 +21,11 @@ const dto = (extra = {}) => ({ version: 1, prompt: { text: 'Do work', kind: 'tas
 test('inspection: collapsed defaults, honest unavailable/verified-empty and zero metrics', () => {
   const f = fixture();
   assert.equal(f.element.open, false); assert.ok(f.sections.every((s) => !s.open));
-  assert.match(f.texts(), /Unavailable/); assert.doesNotMatch(f.texts(), /verified empty/);
+  assert.match(f.texts(), /Unavailable/); assert.doesNotMatch(f.texts(), /Verified empty/);
   f.update(dto());
-  assert.match(f.texts(), /verified empty/); assert.match(f.texts(), /Total tokens: 0/);
+  assert.match(f.texts(), /Verified empty/); assert.match(f.texts(), /Total tokens: 0/);
   assert.match(f.texts(), /Cost USD: \$0/); assert.match(f.texts(), /Elapsed wall time: 0 ms · Run scope/);
-  assert.match(f.texts(), /Child totals · Final reported values/);
+  assert.match(f.texts(), /Child totals · Final/);
   f.update({ version: 2, prompt: { text: 'unsupported' } }); assert.doesNotMatch(f.texts(), /unsupported/);
 });
 test('inspection: stable section nodes, focus and scroll while replacing cumulative snapshots', () => {
@@ -41,7 +41,7 @@ test('inspection: stable section nodes, focus and scroll while replacing cumulat
   assert.equal(f.texts().match(/<script>/g).length, 1); assert.match(f.texts(), /running \(last snapshot\)/);
   assert.match(f.texts(), /Observed successful tool/); assert.match(f.texts(), /Upstream reported change/);
   assert.match(f.texts(), /Session totals · Provisional/); assert.match(f.texts(), /Partial \/ missing metrics/);
-  assert.match(f.texts(), /Disconnected · last snapshot/);
+  assert.match(f.texts(), /Disconnected/);
 });
 test('inspection: bounded previews, omission notices, invalid metrics and no inferred totals', () => {
   const f = fixture();
@@ -62,7 +62,7 @@ test('inspection: authoritative settled endpoints only, destroy freezes updates'
   f.update(dto({ timing: { startedAt: 100, endedAt: 350, durationMs: null, scope: 'run' } }));
   assert.match(f.texts(), /Measured wall time \(run endpoints\): 250 ms/);
   f.update(dto({ timing: { startedAt: 100, endedAt: null, durationMs: null, live: true } }));
-  assert.match(f.texts(), /Wall time: unavailable/); assert.match(f.texts(), /not a ticking clock/);
+  assert.match(f.texts(), /Wall time: unavailable/); assert.match(f.texts(), /Live/);
   f.update(dto({ timing: { startedAt: 350, endedAt: 100 } })); assert.match(f.texts(), /Wall time: unavailable/);
   const before = f.texts(); f.destroy(); f.update(dto()); assert.equal(f.texts(), before);
 });

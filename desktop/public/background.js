@@ -139,7 +139,7 @@ export function createBackground({ storage, onPhotoChange, document: doc = globa
       if (stored) writePhoto(storage, dataUrl);
       image = stored ? await decodeImage(dataUrl, doc) : original;
       onPhotoChange?.();
-      return { ok: true, stored, message: stored ? 'Photo becomes a point cloud; the pointer pushes it.' : 'Photo is too large to remember; it shows until the app restarts.' };
+      return { ok: true, stored, message: stored ? 'Photo becomes a point cloud; the pointer pushes it.' : 'Photo is too large to remember.' };
     },
     async setPhotoDataUrl(dataUrl) {
       if (!dataUrl) { controller.clearPhoto(); return false; }

@@ -53,7 +53,7 @@ export function createInspectionPanel({ document: doc, kind }) {
     const fileItems = Array.isArray(files.items) ? files.items.slice(0, 64).filter(Boolean) : [];
     const toolOmitted = (count(tools.omitted) ?? 0) + Math.max(0, (Array.isArray(tools.items) ? tools.items.length : 0) - 40);
     const fileOmitted = (count(files.omitted) ?? 0) + Math.max(0, (Array.isArray(files.items) ? files.items.length : 0) - 64);
-    const evidenceLabel = (state, items, omitted) => state === 'unavailable' ? 'Unavailable · unknown coverage' : state === 'partial' ? 'Partial evidence · not a complete record' : !items.length && !omitted ? 'Complete evidence · verified empty' : 'Complete evidence';
+    const evidenceLabel = (state, items, omitted) => state === 'unavailable' ? 'Unavailable' : state === 'partial' ? 'Partial' : !items.length && !omitted ? 'Verified empty' : 'Complete';
     const toolLines = toolItems.map((item) => {
       const status = ['running', 'done', 'error', 'interrupted'].includes(item.status) ? item.status : 'unknown';
       return `${take(item.name, 100) || 'Unknown tool'} · ${status}${!connected && status === 'running' ? ' (last snapshot)' : ''}\n${take(item.summary, 600)}`;
@@ -68,7 +68,7 @@ export function createInspectionPanel({ document: doc, kind }) {
     const fields = [['Input tokens', 'inputTokens'], ['Output tokens', 'outputTokens'], ['Cache read tokens', 'cacheReadTokens'], ['Cache write tokens', 'cacheWriteTokens'], ['Total tokens', 'totalTokens']];
     const partial = fields.some(([, key]) => count(usage[key]) === null) || cost === null;
     const hasUsage = fields.some(([, key]) => count(usage[key]) !== null) || cost !== null;
-    const state = !hasUsage ? 'Unavailable' : usage.provisional === true ? 'Provisional / live snapshot' : 'Final reported values';
+    const state = !hasUsage ? 'Unavailable' : usage.provisional === true ? 'Provisional' : 'Final';
     // durationMs may be reported or backend-measured; v1 does not encode that provenance.
     // Only authoritative settled endpoints can supply a measured fallback.
     const started = number(timing.startedAt), ended = number(timing.endedAt);
@@ -76,12 +76,12 @@ export function createInspectionPanel({ document: doc, kind }) {
     const measured = started !== null && ended !== null && ended >= started ? ended - started : null;
     const elapsed = reported ?? measured;
     const timeLabel = reported !== null ? 'Elapsed wall time' : measured !== null ? 'Measured wall time (run endpoints)' : 'Wall time';
-    const timeState = !connected ? 'Disconnected · last snapshot' : timing.live === true ? 'Live snapshot · not a ticking clock' : ended !== null ? 'Settled' : 'Settlement unavailable';
+    const timeState = !connected ? 'Disconnected' : timing.live === true ? 'Live' : ended !== null ? 'Settled' : 'Unsettled';
     const scroll = [element, content, ...Object.values(sections)].map((target) => [target, target.scrollTop, target.scrollLeft]);
     set(summary, `Inspection · ${shown(count(tools.total))} tools · ${shown(tokens)} tokens · ${cost === null ? 'cost unavailable' : `$${cost}`} · ${duration(elapsed)}${usage.provisional === true ? ' · provisional' : ''}${!connected ? ' · disconnected' : ''}`);
     set(sections.Prompt, `${promptLabel}\n${promptAvailable ? promptText || '(Empty prompt)' : 'Unavailable'}${promptClipped ? '\nClipped prompt preview' : ''}`);
     set(sections.Tools, `${evidenceLabel(toolAvailability, toolItems, toolOmitted)} · Total: ${shown(count(tools.total))}\n${toolLines.join('\n\n')}${toolOmitted ? `\n${toolOmitted} tool calls omitted` : ''}`);
-    set(sections.Files, `${evidenceLabel(fileAvailability, fileItems, fileOmitted)}\n${fileLines.join('\n')}${fileOmitted ? `\n${fileOmitted} file entries omitted` : ''}\nChild-attributed evidence only; not a workspace diff.`);
+    set(sections.Files, `${evidenceLabel(fileAvailability, fileItems, fileOmitted)}\n${fileLines.join('\n')}${fileOmitted ? `\n${fileOmitted} file entries omitted` : ''}`);
     set(sections['Usage + time'], `${scope} · ${state}${partial ? ' · Partial / missing metrics' : ''}\n${fields.map(([label, key]) => `${label}: ${shown(count(usage[key]))}`).join('\n')}\nCost USD: ${cost === null ? 'unavailable' : `$${cost}`}\n${timeLabel}: ${duration(elapsed)} · ${timing.scope === 'run' ? 'Run scope' : 'Timing scope unavailable'}\n${timeState}${clipped ? '\nDisplay previews clipped to bounded limits' : ''}`);
     for (const [target, top, left] of scroll) { target.scrollTop = top; target.scrollLeft = left; }
   }

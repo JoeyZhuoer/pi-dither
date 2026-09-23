@@ -4,7 +4,7 @@
 .window-body.has-inspection{overflow-y:auto;overscroll-behavior:contain}
 .has-inspection>.inspection-panel{flex-shrink:0;min-height:26px}
 .inspection-panel .inspection-content{padding:3px 7px}
-.inspection-panel .inspection-section{border-top:1px solid var(--muted);margin:2px 0}
+.inspection-panel .inspection-section{margin:4px 0}
 .inspection-panel .inspection-heading{padding:4px 0;cursor:pointer}
 .inspection-panel summary:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .inspection-panel .inspection-value{margin:2px 0 7px;padding:5px;background:var(--paper);font:13px/1.35 var(--code);white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto}

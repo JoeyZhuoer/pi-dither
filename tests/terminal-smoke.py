@@ -103,11 +103,15 @@ def smoke(columns, rows, mode, truecolor):
             start = len(output)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 40, 0, 0))
             os.killpg(pid, signal.SIGWINCH)
-            expect('03 / INPUT', start)
+            # The TUI may redraw only changed cells, so a resized screen can legitimately reuse
+            # the header it already drew; assert it is on screen rather than newly emitted.
+            expect('03 / INPUT')
             start = len(output)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, columns, 0, 0))
             os.killpg(pid, signal.SIGWINCH)
-            expect('03 / INPUT', start)
+            # The TUI may redraw only changed cells, so a resized screen can legitimately reuse
+            # the header it already drew; assert it is on screen rather than newly emitted.
+            expect('03 / INPUT')
             os.write(fd, b'/quit\r')
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:

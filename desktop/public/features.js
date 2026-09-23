@@ -61,7 +61,7 @@ export function installUsageDiagram(root, openUsage) {
   heading.type = 'button'; heading.setAttribute('aria-label', 'Open detailed session usage');
   heading.append(node('span', '↗')); heading.addEventListener('click', openUsage);
   const label = node('p', '', 'usage-agent'), bars = node('div', null, 'usage-bars');
-  bars.setAttribute('role', 'img'); bars.title = 'Token counts; bars share a scale relative to the largest category. Cache combines read and write.';
+  bars.setAttribute('role', 'img'); bars.title = 'Token counts';
   const rows = ['IN', 'OUT', 'CACHE'].map((text) => {
     const row = node('div', null, 'usage-bar'), track = node('span', null, 'usage-track');
     const fill = node('span', null, 'usage-fill'), amount = node('span', '', 'usage-amount');
@@ -95,8 +95,8 @@ export function installUsageDiagram(root, openUsage) {
       context.title = contextText; context.setAttribute('aria-valuetext', data.context === null ? `Occupancy unknown. ${contextText}` : `${number(data.context)}% used. ${contextText}`);
       contextFill.style.width = `${Math.min(100, data.context ?? 0)}%`;
       if (data.context === null) context.removeAttribute('aria-valuenow'); else context.setAttribute('aria-valuenow', String(Math.min(100, data.context)));
-      note.textContent = !online ? 'OFFLINE / last reported totals'
-        : !idle(agent) ? `ACTIVE / ${data.provisional === null ? 'turn usage pending' : `${short(data.provisional)} turn tok (provisional)`}`
+      note.textContent = !online ? 'OFFLINE'
+        : !idle(agent) ? `ACTIVE / ${data.provisional === null ? 'TURN PENDING' : `${short(data.provisional)} TOK \u00b7 PROVISIONAL`}`
           : 'REPORTED SESSION TOTALS';
     },
   };
@@ -160,16 +160,16 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   }
   async function mutate(panel, allowed, request, success, sensitive = false) {
     if (disposed || mutation) return;
-    if (!allowed()) { message(panel, 'Unavailable: connect and wait for the required agents to be idle.', true); return; }
+    if (!allowed()) { message(panel, 'Unavailable.', true); return; }
     // Invalidate metadata fetched before a mutation; it must not overwrite its result.
     panel.generation++; panel.request = null;
     mutation = true; controls(); message(panel, 'Applying…');
     try {
       const result = await request();
-      if (!disposed) { message(panel, 'Applied.'); toast(sensitive ? 'Provider override updated. No key was validated or displayed.' : 'Change applied.'); await success?.(result); }
+      if (!disposed) { message(panel, 'Applied.'); toast(sensitive ? 'Provider override updated.' : 'Change applied.'); await success?.(result); }
     } catch (error) {
       // Provider errors are deliberately generic: a downstream error must never echo credentials.
-      if (!disposed) message(panel, sensitive ? 'Provider update failed. The key was cleared; check the provider configuration and connection.' : error.message || 'Request failed.', true);
+      if (!disposed) message(panel, sensitive ? 'Provider update failed.' : error.message || 'Request failed.', true);
     } finally { mutation = false; if (!disposed) { controls(); renderModels(); renderActivity(); } }
   }
   function makePanel(id, index) {
@@ -217,7 +217,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
       modelOptions(agent?.model?.id);
       choices(thinking, (agent?.levels || []).map((level) => [level, level]), agent?.thinking);
     }
-    modelState.textContent = agent ? `${agent.name || agent.id} · ${agent.phase} · Current: ${agent.model ? `${agent.model.provider} / ${agent.model.id}` : 'Unknown'} · Thinking: ${agent.thinking ?? 'Unknown'}` : 'No agents. Configure Pi in the terminal if no models are available.';
+    modelState.textContent = agent ? `${agent.name || agent.id} · ${agent.phase} · Current: ${agent.model ? `${agent.model.provider} / ${agent.model.id}` : 'Unknown'} · Thinking: ${agent.thinking ?? 'Unknown'}` : 'No agents.';
     controls();
   }
   on(modelAgent, 'change', () => { modelSignature = ''; renderModels(); });
@@ -249,7 +249,6 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   const toolsExtension = node('p', null, 'feature-empty'); toolsExtension.dataset.testid = 'tools-extension';
   toolsForm.append(toolsCurrent, toolsExtension, toolsList);
   const toolsActions = node('div', null, 'feature-toolbar'); toolsForm.append(toolsActions);
-  tools.content.append(node('p', 'Apply changes only this agent’s session tools. Requires a connected, idle agent with no queued messages. No prompt is sent. Tool restrictions are not an OS sandbox.', 'feature-empty'));
   let toolsSignature = '';
   const toolInputs = new Map();
   const supportsTools = (agent) => Array.isArray(agent?.availableTools) && Array.isArray(agent?.activeTools);
@@ -281,7 +280,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     }
     toolsExtension.hidden = !agent?.extensionStatus;
     toolsExtension.textContent = agent?.extensionStatus?.message || '';
-    toolsCurrent.textContent = !agent ? 'No agent selected.' : `${agent.name || agent.id} · Current active tools: ${supported ? agent.activeTools.join(', ') || 'None (all tools disabled)' : 'Unavailable (not reported)'}`;
+    toolsCurrent.textContent = !agent ? 'No agent selected.' : `${agent.name || agent.id} · Current active tools: ${supported ? agent.activeTools.join(', ') || 'None' : 'Unavailable'}`;
     controls();
   }
   on(toolsAgent, 'change', renderTools);
@@ -310,19 +309,18 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
 
   // Provider keys live only in a password input and the single in-flight POST body.
   const providersPanel = panels.get('providers');
-  providersPanel.content.append(node('p', 'Temporary overrides last for this server lifetime only. Global auth is unchanged. Keys are not provider-validated until a real request. OAuth and custom endpoints are terminal-managed.'));
   const providerList = node('div'); providersPanel.content.append(providerList);
   const providerForm = node('form', null, 'feature-form'); providersPanel.content.append(providerForm);
   const providerChoice = field(providerForm, 'Built-in provider', 'providers-provider', 'select');
   const apiKey = field(providerForm, 'Temporary API key', 'providers-key', 'password');
   apiKey.autocomplete = 'new-password'; apiKey.spellcheck = false;
-  const reconnect = () => globalThis.confirm('Reconnect all agents to apply this temporary provider override? Saved sessions are preserved. No key validation request will be sent.');
+  const reconnect = () => globalThis.confirm('Reconnect all agents to apply this temporary provider override?');
   providerForm.append(button('Set key & reconnect', 'providers-set', () => providerForm.requestSubmit(), () => allIdle() && !!providerChoice.value));
   on(providerForm, 'submit', (event) => {
     event.preventDefault();
     const body = { provider: providerChoice.value, apiKey: apiKey.value }; apiKey.value = '';
     if (!body.apiKey.trim()) { message(providersPanel, 'Enter an API key.', true); return; }
-    if (mutation || !allIdle() || !body.provider) { body.apiKey = ''; message(providersPanel, 'All agents must be idle and connected to the server.', true); return; }
+    if (mutation || !allIdle() || !body.provider) { body.apiKey = ''; message(providersPanel, 'All agents must be idle and connected.', true); return; }
     if (!reconnect()) { body.apiKey = ''; return; }
     void mutate(providersPanel, allIdle, async () => {
       try { return await api('/api/providers/configure', body); } finally { body.apiKey = ''; }
@@ -346,7 +344,6 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   // Appearance: theme accent, ground colour and a locally stored dithered
   // photo. No requests, no timers; changes apply immediately and persist.
   const backgroundPanel = panels.get('background');
-  backgroundPanel.content.append(node('p', 'The theme colour paints the desktop chrome; the ground colour fills the desk. The photo is downscaled, stored locally and turned into the point-cloud background: move the pointer to push or pull it, and it springs back when you leave. Nothing is uploaded. Very large photos show until the app restarts.'));
   const backgroundForm = node('form', null, 'feature-form'); backgroundPanel.content.append(backgroundForm);
   const themeInput = field(backgroundForm, 'Theme colour', 'background-theme', 'color');
   const groundInput = field(backgroundForm, 'Ground colour', 'background-ground', 'color');
@@ -379,7 +376,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   const motionZero = button('Re-zero motion', 'background-motion-rezero', () => {
     if (!particles) return;
     particles.rezeroMotion();
-    message(backgroundPanel, 'Motion re-zeroed: the current resting position is level.');
+    message(backgroundPanel, 'Motion re-zeroed.');
     renderMotionStatus();
   });
   backgroundForm.append(themeDefault, groundDefault, photoRemove, motionZero);
@@ -432,7 +429,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     const next = particles.setMotionMode(motionInput.value);
     choices(motionInput, MOTION_CHOICES, next);
     message(backgroundPanel, next === 'off' ? 'Motion is off.'
-      : `Motion ${next}: tip or move the machine and the cloud leans${next === 'full' ? ', lags behind a push and bursts on a shake' : ''}. Re-zero makes the current position level.`);
+      : `Motion ${next}.`);
     renderMotionStatus();
     syncMotionTicker();
   });
@@ -468,7 +465,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   workspace.content.insertBefore(browseInfo, directories);
   let browsingPath = '', parentPath = null;
   function openWorkspace(panel, path) {
-    if (!path || !globalThis.confirm(`Open workspace ${path}? All agents must be idle. A new main session will be created and desktop-owned agents closed; saved sessions remain on disk.`)) return;
+    if (!path || !globalThis.confirm(`Open workspace ${path}? All agents must be idle.`)) return;
     return mutate(panel, allIdle, () => api('/api/workspace', { path }), (data) => {
       if (data.cwd) workspaceCurrent.textContent = `Current workspace: ${data.cwd}`;
       browsingPath = data.cwd || path; pathInput.value = browsingPath;
@@ -516,7 +513,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     diffPending = true; const generation = ++diffGeneration; diffStatus.textContent = 'Loading diff…'; controls();
     try {
       const data = await api('/api/git/diff');
-      if (!disposed && generation === diffGeneration) { diff.textContent = data.diff || 'No diff reported.'; diffStatus.textContent = data.truncated ? 'Diff truncated by server.' : 'Diff loaded. Untracked file contents may not be included.'; }
+      if (!disposed && generation === diffGeneration) { diff.textContent = data.diff || 'No diff reported.'; diffStatus.textContent = data.truncated ? 'Diff truncated by server.' : 'Diff loaded.'; }
     } catch (error) { if (!disposed && generation === diffGeneration) { diffStatus.textContent = error.message || 'Diff failed.'; diff.textContent = ''; } }
     finally { if (generation === diffGeneration) { diffPending = false; controls(); } }
   }
@@ -537,7 +534,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
 
   // Unknown values stay unknown. Provisional active usage is deliberately separate from totals.
   const usage = panels.get('usage'), usageAgent = field(usage.toolbar, 'Usage view', 'usage-agent', 'select');
-  const usageData = node('div'); usage.content.append(node('p', 'Session totals are authoritative reported stats. Active-message usage is provisional and is not added to those totals.'), usageData);
+  const usageData = node('div'); usage.content.append(usageData);
   let usageRows = null, usageSignature = '';
   function statsList(parent, stats = {}) {
     const list = node('dl', null, 'feature-stats');
@@ -561,7 +558,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (!selected.length) empty(usageData, 'No usage reported.');
     for (const agent of selected) {
       const item = section(usageData, agent.name || agent.id); item.append(node('p', `Session: ${agent.sessionId || 'Unknown'}`)); statsList(item, agent.stats);
-      item.append(node('h4', 'Provisional active-message usage (not included above)'));
+      item.append(node('h4', 'Provisional active-message usage'));
       if (agent.currentUsage == null) empty(item, 'No active-message usage reported.');
       else {
         // Preserve the provider-reported shape rather than infer an unsupported cost/token schema.
@@ -584,7 +581,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
 
   const sessions = panels.get('sessions'), search = field(sessions.toolbar, 'Search sessions', 'sessions-search', 'search');
   const showArchived = field(sessions.toolbar, 'Include archived sessions', 'sessions-show-archived', 'checkbox');
-  const sessionList = node('div'); sessions.content.append(node('p', 'Desktop-owned sessions only. Archive changes metadata, never deletes transcripts.'), sessionList);
+  const sessionList = node('div'); sessions.content.append(sessionList);;
   let sessionRows = [];
   function renderSessions() {
     sessionList.replaceChildren();
@@ -600,7 +597,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
         void mutate(sessions, allIdle, () => api('/api/sessions/rename', { key: entry.key, name: value }), () => sessions.refresh());
       }); item.append(renameForm);
       item.append(button('Resume', 'sessions-resume', () => {
-        if (!globalThis.confirm(`Resume ${entry.name || 'this session'} and replace the current desktop session? Saved transcripts are preserved; the session workspace will be restored.`)) return;
+        if (!globalThis.confirm(`Resume ${entry.name || 'this session'} and replace the current desktop session?`)) return;
         void mutate(sessions, allIdle, () => api('/api/sessions/resume', { key: entry.key }), () => invalidate(['sessions', 'workspace', 'git', 'usage']));
       }, allIdle), button(entry.archived ? 'Restore' : 'Archive', 'sessions-archive', () => mutate(sessions, () => allIdle() && (!entry.active || entry.archived), () => api('/api/sessions/archive', { key: entry.key, archived: !entry.archived }), () => sessions.refresh()), () => allIdle() && (!entry.active || entry.archived)));
     }
@@ -608,7 +605,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   }
   on(search, 'input', renderSessions); on(showArchived, 'change', renderSessions);
   sessions.toolbar.append(button('New main session', 'sessions-new', () => {
-    if (!globalThis.confirm('Start a new main session? The current session remains saved.')) return;
+    if (!globalThis.confirm('Start a new main session?')) return;
     void mutate(sessions, () => agentIdle('main'), () => api('/api/agents/main/new', {}), () => invalidate(['sessions', 'usage']));
   }, () => agentIdle('main')), button('Clone current main session', 'sessions-clone', () => {
     void mutate(sessions, () => allIdle() && agentIdle('main'), () => api('/api/sessions/clone', {}), () => sessions.refresh());
@@ -616,7 +613,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   sessions.refresh = () => load(sessions, 'sessions', () => api('/api/sessions'), (data) => { sessionRows = data.sessions || []; renderSessions(); }); refreshButton(sessions);
 
   const activity = panels.get('activity'), activityList = node('div');
-  activity.content.append(node('p', 'Actual reported events only. Missing activity does not mean a process is hung. Hiding a window does not stop an agent.'), activityList);
+  activity.content.append(activityList);;
   const activityNodes = new Map();
   function renderActivity() {
     const current = new Set(agents().map((agent) => agent.id));
@@ -630,9 +627,9 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
         root.append(info, queue, button('Focus agent', 'activity-focus', () => focus(agent.id)), button('Stop', 'activity-stop', () => {
           void mutate(activity, () => !!state.connected && !!agentById(agent.id)?.connected && !idle(agentById(agent.id)), () => api(`/api/agents/${encodeURIComponent(agent.id)}/stop`, {}), (result) => {
             if (result.recovered?.length) {
-              const recovered = section(root, 'Recovered queued messages — copy before leaving');
+              const recovered = section(root, 'Recovered queued messages');
               recovered.append(node('pre', result.recovered.join('\n\n')));
-              message(activity, 'Stopped. Recovered queued messages are shown below; nothing was resent.');
+              message(activity, 'Stopped. Recovered queued messages are shown below.');
             }
           });
         }, () => !!state.connected && !!agentById(agent.id)?.connected && !idle(agentById(agent.id))), history);

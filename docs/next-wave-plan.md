@@ -1,3 +1,5 @@
+> Superseded by docs/ui-next-wave-plan.md: the Thinking panel described below was reverted into the agent window in the following wave.
+
 # Next wave plan — 2px dots, laptop-motion physics, streaming Thinking panel
 
 Three features, three writer lanes, one writer at a time, parent integrates and publishes.

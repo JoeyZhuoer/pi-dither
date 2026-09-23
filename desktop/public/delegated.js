@@ -83,7 +83,7 @@ export function installDelegatedObservers({ windows, storage, document: doc = do
         const status = node('div', 'agent-meta delegated-status'); status.setAttribute('role', 'status');
         const inspection = createInspectionPanel({ document: doc, kind: 'delegated' });
         const output = node('div', 'conversation'); output.setAttribute('aria-label', 'Delegated output'); output.tabIndex = 0;
-        win.body.append(status, inspection.element, output, node('div', 'agent-footer', 'DISPLAY ONLY · Existing extension child · Bounded output preview · Closing does not stop work'));
+        win.body.append(status, inspection.element, output, node('div', 'agent-footer', 'DISPLAY ONLY'));
         panel = { win, status, inspection, output }; panels.set(id, panel);
       }
       windows.rename(id, `DELEGATED / ${text(row.name, 100) || 'Child'} · Observer`);

@@ -68,7 +68,7 @@ test('usage diagram renders safe accessible telemetry, separate turn totals and 
   assert.equal(root.querySelector('.usage-context').attributes['aria-valuenow'], '25');
   assert.match(root.querySelector('.usage-bars').attributes['aria-label'], /CACHE: 100 tokens/);
   agent.phase = 'running'; agent.currentUsage = { totalTokens: 42 }; view.update(agent, true);
-  assert.match(root.querySelector('.usage-note').textContent, /42 turn tok \(provisional\)/);
+  assert.match(root.querySelector('.usage-note').textContent, /42 TOK \u00b7 PROVISIONAL/);
   assert.match(root.querySelector('.usage-totals').textContent, /350 TOK/);
   view.update(agent, false); assert.equal(root.dataset.stale, 'true'); assert.match(root.textContent, /OFFLINE/);
   root.querySelector('button').click(); assert.equal(opens, 1);
@@ -184,8 +184,7 @@ test('feature menu, appearance window and window settings exist in the shell', a
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
   assert.doesNotMatch(html, /id="background"/);
   assert.match(html, /id="particles"/);
-  assert.match(html, /The desktop chrome and ground colours are yours in <strong>Appearance<\/strong>/);
-  assert.match(html, /dithered photo/);
+  assert.match(html, /<strong>Appearance<\/strong> holds the colours, the background photo and the extra particle field/);
 });
 
 test('Tools drafts, authoritative Apply, guards, empty catalogs and stale responses (no provider)', async (t) => {
@@ -218,7 +217,7 @@ test('Tools drafts, authoritative Apply, guards, empty catalogs and stale respon
   const patch = (id, changes) => update({ agents: state.agents.map(agent => agent.id === id ? { ...agent, ...changes } : agent) });
   const active = () => ['read', 'ls'].filter(name => el(`tools-tool-${name}`)?.checked);
   assert.equal(features.open('tools', 'child'), true); assert.equal(el('tools-agent').value, 'child');
-  assert.match(el('tools-current').textContent, /None \(all tools disabled\)/);
+  assert.match(el('tools-current').textContent, /Current active tools: None/);
   assert.equal(el('feature-tools').querySelector('img'), null);
   assert.equal(features.open('tools', 'missing'), false);
   el('tools-all').click(); assert.deepEqual(active(), ['read', 'ls']);
@@ -394,7 +393,7 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
         el('tools-apply').closest('form').requestSubmit();
         check(calls.length === 1 && calls[0].body.tools.length === 0 && el('tools-apply').disabled, 'Tools empty selection submits once via real form');
         releaseTools({ availableTools: child.availableTools, activeTools: [] }); await tick();
-        check(el('tools-current').textContent.includes('None (all tools disabled)'), 'Tools shows authoritative empty active set');
+        check(el('tools-current').textContent.includes('None'), 'Tools shows the empty active set');
         child.activeTools = []; features.update(state);
         click('tools-all'); click('tools-apply'); await tick();
         check(calls.at(-1).body.tools.join(',') === 'read,ls' && el('tools-tool-read').checked && el('tools-tool-ls').checked, 'Tools all is explicit and authoritative');

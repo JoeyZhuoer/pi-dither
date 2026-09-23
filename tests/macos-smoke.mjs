@@ -45,7 +45,9 @@ try {
   child.stdout.on('data', (data) => { stdout = (stdout + data).slice(-8000); });
   child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-8000); });
   const code = await new Promise((resolveExit, reject) => {
-    const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`Native launch timed out: ${stdout}\n${stderr}`)); }, 90_000);
+    // Budget raised: the smoke now waits for the cloud's forced regions to change, and
+    // the 2px x 800k cloud plus a loaded machine need longer than 90 s.
+    const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error(`Native launch timed out: ${stdout}\n${stderr}`)); }, 240_000);
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('exit', (code) => { clearTimeout(timer); resolveExit(code); });
   });
@@ -60,7 +62,7 @@ try {
   const launchOut = join(root, 'launchservices.stdout'), launchErr = join(root, 'launchservices.stderr');
   const launcher = spawn('/usr/bin/open', ['-n', '-W', '--env', `PI_DITHER_SMOKE_ROOT=${root}`, '--env', `HOME=${root}`, '--env', 'PATH=/usr/bin:/bin:/usr/sbin:/sbin', '--stdout', launchOut, '--stderr', launchErr, relocated, '--args', '--smoke-test'], { stdio: 'ignore' });
   const launchCode = await new Promise((resolveExit, reject) => {
-    const timer = setTimeout(() => { launcher.kill(); reject(new Error('LaunchServices smoke timed out')); }, 90_000);
+    const timer = setTimeout(() => { launcher.kill(); reject(new Error('LaunchServices smoke timed out')); }, 240_000);
     launcher.once('error', (error) => { clearTimeout(timer); reject(error); });
     launcher.once('exit', (code) => { clearTimeout(timer); resolveExit(code); });
   });
