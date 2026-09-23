@@ -1,12 +1,11 @@
 import { access } from 'node:fs/promises';
-import { join } from 'node:path';
 import { DesktopPreferences, DesktopSessions, directory, browseDirectory, gitInfo, gitDiff, loadPi } from './workspace.mjs';
 
 export class DesktopControls {
   constructor({ dataDir, host, sessions, getCwd, makeSession, replaceFleet }) {
     Object.assign(this, { host, sessions, getCwd, makeSession, replaceFleet });
     this.preferences = new DesktopPreferences(dataDir);
-    this.store = new DesktopSessions(join(dataDir, 'desktop-sessions'), this.preferences, host);
+    this.store = new DesktopSessions({ preferences: this.preferences, host });
     this.keys = Object.create(null);
   }
   async initialize() { await this.preferences.load(); }
@@ -35,7 +34,7 @@ export class DesktopControls {
       }
       case '/api/git': return gitInfo(this.getCwd());
       case '/api/git/diff': return gitDiff(this.getCwd());
-      case '/api/sessions': return { scope: 'Desktop sessions', sessions: (await this.store.list(this.sessions)).map(({ path: _path, ...row }) => row) };
+      case '/api/sessions': return { scope: 'Pi sessions', sessions: (await this.store.list(this.sessions)).map(({ path: _path, ...row }) => row) };
       case '/api/usage': {
         const agents = [...this.sessions.values()];
         await Promise.all(agents.filter((a) => a.state.connected).map((a) => a.refresh?.().catch(() => {})));

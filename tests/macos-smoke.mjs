@@ -2,8 +2,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, mkdir, rm, readFile, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 if (process.platform !== 'darwin') throw new Error('Native smoke test requires a macOS GUI session.');
@@ -16,12 +16,18 @@ execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 const root = await mkdtemp(join(tmpdir(), 'pi-dither-native-'));
 let child;
 try {
+  // The app has no bundled runtime: expose the installed native Pi (with its
+  // Node engine) and the profile's npm packages to the isolated HOME.
+  const realHome = homedir();
+  await mkdir(join(root, '.local', 'share'), { recursive: true });
+  await symlink(join(realHome, '.local', 'share', 'pi-node'), join(root, '.local', 'share', 'pi-node'), 'dir');
+  await mkdir(join(root, 'profile'), { recursive: true });
+  await symlink(join(realHome, '.pi', 'agent', 'npm'), join(root, 'profile', 'npm'), 'dir');
   const relocated = join(root, 'Relocated App With Spaces', 'Pi Dither.app');
   execFileSync('/usr/bin/ditto', [app, relocated]);
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', relocated]);
   const inventory = JSON.parse(await readFile(join(relocated, 'Contents/Resources/runtime-inventory.json'), 'utf8'));
-  assert.equal(inventory.pi, '0.85.1'); assert.equal(inventory.subagents, '0.69.0');
-  assert.ok(!inventory.packages.some((pkg) => ['pi-web-search', 'pi-atelier'].includes(pkg.name)));
+  assert.equal(inventory.application, '0.4.0');
   const sourceInventory = JSON.parse(await readFile(join(relocated, 'Contents/Resources/source-inventory.json'), 'utf8'));
   for (const required of ['desktop/public/windows.js', 'desktop/public/app.js', 'desktop/public/inspection.js', 'desktop/public/combobox.js', 'desktop/inspection.mjs']) {
     assert.ok(sourceInventory.files.some(file => file.path === required), `bundled feature missing: ${required}`);

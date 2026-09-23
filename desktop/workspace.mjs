@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { realpath, stat, readdir, readFile, writeFile, mkdir, rename, lstat } from 'node:fs/promises';
-import { resolve, dirname, basename, join } from 'node:path';
+import { resolve, dirname, basename, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -103,17 +103,22 @@ export async function gitDiff(cwd) {
 }
 export async function loadPi(host = findPi()) { return import(pathToFileURL(join(host.root, 'dist/index.js')).href); }
 export const sessionKey = (path) => createHash('sha256').update(resolve(path)).digest('hex').slice(0, 32);
+// Pi Dither stores and lists sessions in the standard Pi session root
+// (~/.pi/agent/sessions) so the app and the `pi` CLI share one store.
 export class DesktopSessions {
-  constructor(sessionDir, preferences, host) { this.dir = sessionDir; this.preferences = preferences; this.host = host; }
+  constructor({ preferences, host }) { this.preferences = preferences; this.host = host; }
+  async root() { return join((await loadPi(this.host)).getAgentDir(), 'sessions'); }
   async list(agents) {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const pi = await loadPi(this.host);
-    const items = await pi.SessionManager.listAll(this.dir);
-    // Reject symlinks/out-of-directory entries, even if a future Pi listing expands its scope.
+    const root = resolve(join(pi.getAgentDir(), 'sessions'));
+    const items = await pi.SessionManager.listAll();
+    // Reject symlinks and entries outside the Pi session root, even if a future
+    // Pi listing expands its scope.
     const own = [];
     for (const item of items) {
       try {
-        if (dirname(resolve(item.path)) !== resolve(this.dir) || (await lstat(item.path)).isSymbolicLink()) continue;
+        const path = resolve(item.path);
+        if (path === root || !path.startsWith(root + sep) || (await lstat(item.path)).isSymbolicLink()) continue;
         own.push(item);
       } catch { /* A disappeared session is omitted, never replaced with another path. */ }
     }
@@ -131,12 +136,15 @@ export class DesktopSessions {
   async get(key, agents) {
     if (typeof key !== 'string' || !/^[a-f0-9]{32}$/.test(key)) throw new Error('Invalid session key');
     const row = (await this.list(agents)).find((item) => item.key === key);
-    if (!row) throw new Error('Session not found in desktop-owned storage');
-    if (row.persisted && dirname(await realpath(row.path)) !== await realpath(this.dir)) throw new Error('Session path is outside desktop storage');
+    if (!row) throw new Error('Session not found in the Pi session store');
+    if (row.persisted) {
+      const root = resolve(await this.root()), path = await realpath(row.path);
+      if (path === root || !path.startsWith(root + sep)) throw new Error('Session path is outside the Pi session store');
+    }
     return row;
   }
   async rename(row, name) {
     const pi = await loadPi(this.host);
-    pi.SessionManager.open(row.path, this.dir).appendSessionInfo(name);
+    pi.SessionManager.open(row.path).appendSessionInfo(name);
   }
 }

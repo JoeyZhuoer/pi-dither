@@ -3,8 +3,8 @@ import { join, resolve, relative, isAbsolute } from 'node:path';
 
 // The main agent loads every installed/configured Pi package through the normal
 // resource loader (global profile settings only; the project stays untrusted).
-// The bundled pi-subagents copy is added as an explicit extension path only when
-// the profile does not configure its own package, so it never loads twice.
+// The profile's installed pi-subagents is added as an explicit extension path
+// only when the profile does not configure its own package, so it never loads twice.
 // Read-only subagent windows keep their built-in read-only tools and no
 // extensions of their own.
 export async function desktopExtensions({ agentDir, kind, env = process.env }) {
@@ -15,13 +15,13 @@ export async function desktopExtensions({ agentDir, kind, env = process.env }) {
     return { paths: [], status: 'loaded', version: '', message: 'Installed Pi packages load for the main agent; pi-subagents comes from this profile.' };
   }
   if (!fallback) {
-    return { paths: [], status: 'missing', message: 'pi-subagents is neither configured in this Pi profile nor bundled. Set PI_DESKTOP_SUBAGENTS_ROOT to an existing installation, then restart the desktop.' };
+    return { paths: [], status: 'missing', message: 'pi-subagents is not installed in this Pi profile. Install it, or set PI_DESKTOP_SUBAGENTS_ROOT to an existing package, then restart the desktop.' };
   }
   return { paths: fallback.paths, status: 'loaded', version: fallback.version,
-    message: 'Installed Pi packages load for the main agent; pi-subagents uses the bundled copy because this profile does not configure one.' };
+    message: 'Installed Pi packages load for the main agent; pi-subagents uses the installed copy because this profile does not list it in settings.' };
 }
 
-// The bundled (or explicitly overridden) pi-subagents package, validated so an
+// The installed (or explicitly overridden) pi-subagents package, validated so an
 // escaping or malformed entry can never be loaded.
 async function bundledSubagents({ agentDir, env }) {
   const override = env.PI_DESKTOP_SUBAGENTS_ROOT;

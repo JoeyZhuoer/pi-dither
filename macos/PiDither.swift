@@ -336,9 +336,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     func showLoading() {
         webView.loadHTMLString("<html><body style='background:#cd8fa3;color:#222;font:22px monospace;padding:12vh 8vw'><h1>PI DITHER</h1><p>Starting your local workspace…</p><p>No terminal. No browser tab. Core Pi inside.</p></body></html>", baseURL: nil)
     }
+
+    private func hostHome() -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["HOME"].flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0, isDirectory: true) : nil }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    // Find the user's native Pi installation. The app has no bundled Pi fallback:
+    // when no native copy exists, startService fails with a clear message.
+    private func nativePiRoot() -> URL? {
+        let home = hostHome()
+        var candidates = [home.appendingPathComponent(".local/share/pi-node/current/lib/node_modules/@earendil-works/pi-coding-agent", isDirectory: true)]
+        let piNode = home.appendingPathComponent(".local/share/pi-node", isDirectory: true)
+        if let entries = try? FileManager.default.contentsOfDirectory(at: piNode, includingPropertiesForKeys: nil) {
+            for entry in entries where entry.lastPathComponent.hasPrefix("node-") {
+                candidates.append(entry.appendingPathComponent("lib/node_modules/@earendil-works/pi-coding-agent", isDirectory: true))
+            }
+        }
+        for base in [".npm-global/lib/node_modules", ".local/lib/node_modules"] {
+            candidates.append(home.appendingPathComponent(base).appendingPathComponent("@earendil-works/pi-coding-agent", isDirectory: true))
+        }
+        for base in ["/usr/local/lib/node_modules", "/opt/homebrew/lib/node_modules"] {
+            candidates.append(URL(fileURLWithPath: base, isDirectory: true).appendingPathComponent("@earendil-works/pi-coding-agent", isDirectory: true))
+        }
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.appendingPathComponent("dist/index.js").path) {
+            return candidate
+        }
+        return nil
+    }
+
+    // The app bundles no Node engine: use the one shipped with the Pi
+    // installation, then the user's PATH and common install locations.
+    private func nativeNode(for piRoot: URL) -> URL? {
+        let derived = piRoot.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("bin/node")
+        if FileManager.default.isExecutableFile(atPath: derived.path) { return derived }
+        var candidates: [URL] = []
+        for directory in (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":") where !directory.isEmpty {
+            candidates.append(URL(fileURLWithPath: String(directory)).appendingPathComponent("node"))
+        }
+        for path in ["/usr/local/bin/node", "/opt/homebrew/bin/node", "/usr/bin/node"] {
+            candidates.append(URL(fileURLWithPath: path))
+        }
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
     func startService() {
         guard let resources = Bundle.main.resourceURL else { fail("Application resources are missing."); return }
-        let runtime = resources.appendingPathComponent("runtime"), app = resources.appendingPathComponent("app")
+        let app = resources.appendingPathComponent("app")
         let env = ProcessInfo.processInfo.environment
         if smoke {
             guard let root = env["PI_DITHER_SMOKE_ROOT"], root.hasPrefix("/") else { fail("Smoke tests require an isolated absolute root."); return }
@@ -347,21 +392,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             dataDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Pi Dither", isDirectory: true)
         }
         let project = smoke ? env["PI_DITHER_SMOKE_ROOT"]! : FileManager.default.homeDirectoryForCurrentUser.path
+        // Native Pi and Node are required; there is no bundled runtime fallback.
+        guard let nativePi = nativePiRoot() else {
+            fail("Pi Dither requires an installed core Pi. Install core Pi, then relaunch.")
+            return
+        }
+        guard let node = nativeNode(for: nativePi) else {
+            fail("Pi Dither requires a Node runtime (looked next to the Pi installation and on PATH). Install Node, then relaunch.")
+            return
+        }
         let child = Process(), stdinPipe = Pipe(), stdoutPipe = Pipe(), stderrPipe = Pipe()
         var childEnv = env
         // Do not inherit host-harness routing/bootstrap flags into the packaged
         // app. Ordinary provider environment variables remain user-controlled.
         for key in childEnv.keys where key.hasPrefix("PI_") { childEnv.removeValue(forKey: key) }
         childEnv.removeValue(forKey: "NODE_OPTIONS"); childEnv.removeValue(forKey: "NODE_PATH")
-        childEnv["PATH"] = runtime.appendingPathComponent("bin").path + ":" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
-        childEnv["PI_WORKSTATION_PI_ROOT"] = runtime.appendingPathComponent("pi").path
-        childEnv["PI_DESKTOP_SUBAGENTS_ROOT"] = runtime.appendingPathComponent("extensions/node_modules/pi-subagents").path
+        childEnv["PATH"] = node.deletingLastPathComponent().path + ":" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
+        childEnv["PI_WORKSTATION_PI_ROOT"] = nativePi.path
         childEnv["PI_OFFLINE"] = "1"
         if smoke {
-            childEnv = ["PATH": childEnv["PATH"]!, "HOME": project, "PI_CODING_AGENT_DIR": project + "/profile", "PI_WORKSTATION_PI_ROOT": childEnv["PI_WORKSTATION_PI_ROOT"]!, "PI_DESKTOP_SUBAGENTS_ROOT": childEnv["PI_DESKTOP_SUBAGENTS_ROOT"]!, "PI_OFFLINE": "1"]
+            childEnv = ["PATH": childEnv["PATH"]!, "HOME": project, "PI_CODING_AGENT_DIR": project + "/profile", "PI_WORKSTATION_PI_ROOT": childEnv["PI_WORKSTATION_PI_ROOT"]!, "PI_OFFLINE": "1"]
         }
         child.environment = childEnv
-        child.executableURL = runtime.appendingPathComponent("bin/node")
+        child.executableURL = node
         child.arguments = [app.appendingPathComponent("desktop/native-host.mjs").path, "--data-dir", dataDirectory.path, "--workspace", project, "--port", smoke ? "0" : "4317"]
         child.currentDirectoryURL = URL(fileURLWithPath: project)
         child.standardInput = stdinPipe; child.standardOutput = stdoutPipe; child.standardError = stderrPipe
@@ -373,7 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         // Drain diagnostics without persisting arbitrary tool/provider stderr.
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
         child.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.serviceExited() } }
-        do { try child.run() } catch { fail("The bundled Pi runtime could not be started."); return }
+        do { try child.run() } catch { fail("The native Node/Pi runtime could not be started."); return }
         startupTimer = Timer.scheduledTimer(withTimeInterval: 50, repeats: false) { [weak self] _ in self?.fail("Pi startup timed out. Quit and retry; check that no other Pi Dither instance is running.") }
     }
     func receive(_ data: Data) {

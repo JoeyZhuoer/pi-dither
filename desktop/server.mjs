@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -58,7 +58,6 @@ async function bodyOf(request) {
 export async function createDesktop({ cwd = root, port = 4318, token = randomBytes(32).toString('hex'), factory, host, dataDir = join(root, '.local') } = {}) {
   if (!factory) {
     host ??= findPi();
-    if (host.version !== '0.85.1') throw new Error(`Pi Dither targets Pi 0.85.1; found ${host.version}`);
     cwd = await directory(cwd);
   }
   const sessions = new Map();
@@ -66,12 +65,10 @@ export async function createDesktop({ cwd = root, port = 4318, token = randomByt
   const peers = new Set();
   const requests = new Map();
   const timers = new Map();
-  const sessionDir = join(dataDir, 'desktop-sessions');
-  if (!factory) await mkdir(sessionDir, { recursive: true, mode: 0o700 });
   let controls, controlBusy = false, closing = false, contextId = randomUUID();
   const makeSession = (options) => {
     if (closing) throw problem(503, 'Desktop server is stopping');
-    const input = { cwd, host, sessionDir, keys: controls?.keys ?? {}, ...options };
+    const input = { cwd, host, keys: controls?.keys ?? {}, ...options };
     const agent = factory ? factory(input) : new PiSession(input);
     agent.state.cwd = input.cwd;
     if (input.kind === 'subagent') agent.state.slot = input.slot;

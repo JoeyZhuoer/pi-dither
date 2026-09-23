@@ -59,10 +59,13 @@ test('activity and provisional usage are factual; persisted hydration restores t
 test('real Pi: resume/rename/clone/archive/workspace/provider controls, isolated profiles and no model prompts', { timeout: 90_000 }, async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'pi-controls-test-')));
   const project = join(root, 'project'), other = join(root, 'other'), dataDir = join(root, 'data'), agentDir = join(root, 'agent');
-  for (const path of [project, other, agentDir, join(dataDir, 'desktop-sessions')]) await mkdir(path, { recursive: true });
+  for (const path of [project, other, agentDir]) await mkdir(path, { recursive: true });
+  // The desktop now reads and writes the standard Pi session store, so point
+  // this process (and the child) at the isolated profile before seeding.
+  const previousProfile = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
   const host = findPi(), pi = await loadPi(host);
-  const sessionDir = join(dataDir, 'desktop-sessions');
-  const seed = pi.SessionManager.create(project, sessionDir);
+  const seed = pi.SessionManager.create(project);
   seed.appendSessionInfo('Saved fixture');
   seed.appendMessage({ role: 'user', content: 'A stored question, not a live prompt', timestamp: 1000 });
   seed.appendMessage({ role: 'assistant', api: 'anthropic-messages', provider: 'anthropic', model: 'claude-sonnet-4-5', content: [{ type: 'text', text: '# Stored answer\n\n**Safe** Markdown.' }], timestamp: 1001, stopReason: 'stop', usage: { input: 10, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 13, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
@@ -118,5 +121,9 @@ test('real Pi: resume/rename/clone/archive/workspace/provider controls, isolated
     await api('/api/sessions/resume', { key: originalKey });
     assert.equal(app.sessions.get('main').state.cwd, project);
     assert.ok((await api('/api/usage')).agents[0].stats.tokens.total >= 13);
-  } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await app.close();
+    if (previousProfile === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousProfile;
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -13,9 +13,6 @@ if (args[0] === '--project') {
 }
 
 const host = findPi();
-if (host.version !== '0.85.1') {
-  throw new Error(`This local release targets Pi 0.85.1; found ${host.version}. Revalidate before upgrading.`);
-}
 
 // Explicit per-process loading. No global install, trust override, or saved theme mutation.
 const child = spawn(process.execPath, [

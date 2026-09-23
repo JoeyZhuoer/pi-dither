@@ -1,14 +1,14 @@
 # Pi Dither
 
-A dusty-pink, dithered workspace for **core Pi 0.85.1**: pixel typography, overlapping windows, and live multi-agent observers. A native macOS app, with the existing web and terminal interfaces preserved. No core Pi fork.
+A dusty-pink, dithered workspace for your **installed native Pi**: pixel typography, overlapping windows, and live multi-agent observers. A native macOS app, with the existing web and terminal interfaces preserved. No core Pi fork.
 
 ## macOS application — v0.4.0
 
-Download **`Pi-Dither-0.4.0-macOS-arm64.zip`** from [Releases](https://github.com/JoeyZhuoer/pi-dither/releases), unzip it, and drag **`Pi Dither.app`** to Applications. Double-click to launch a native window—**no Terminal or external browser**. Node, core Pi and a pi-subagents fallback are bundled, and your normal Pi profile is used when present; no separate npm/Pi installation is needed to launch the app.
+Download **`Pi-Dither-0.4.0-macOS-arm64.zip`** from [Releases](https://github.com/JoeyZhuoer/pi-dither/releases), unzip it, and drag **`Pi Dither.app`** to Applications. Double-click to launch a native window—**no Terminal or external browser**. The app runs your installed Pi and the Node runtime that ships with it exclusively; Pi, Node and pi-subagents are not bundled, and your normal Pi profile provides packages.
 
 - **Apple Silicon, macOS 14+**. This build is **ad-hoc signed, not Developer-ID signed/notarized**; downloaded copies may require approval in macOS Privacy & Security. Do not disable Gatekeeper globally.
 - Starts in your home directory. Select a project through **Windows → Workspace** before giving coding instructions, and pick the theme/desk colors or a photo point cloud through **Windows → Appearance** (or add windows back through the **⚙** settings button). Configure a provider through **Providers**, or use existing credentials from your normal `~/.pi/agent` profile. The archive contains no credentials; provider usage can incur charges.
-- App sessions/preferences live in **`~/Library/Application Support/Pi Dither`**, not inside the bundle. Earlier checkout `.local` stores are not moved or deleted. Use **Sessions** to resume saved app conversations.
+- App preferences and the single-instance lease live in **`~/Library/Application Support/Pi Dither`**, not inside the bundle. Pi sessions are written to the standard Pi store (`~/.pi/agent/sessions`) so the app and the `pi` CLI share them; the one-shot migration copied earlier desktop sessions there. Use **Sessions** to resume saved Pi conversations.
 - Closing the native window hides it; the Dock icon or **View → Show Main Window** reopens it. **⌘Q** checks current work and shuts down owned Pi processes. Detached extension jobs may continue; finish/stop those jobs before quitting. View → Open App Data Folder opens Finder, not Terminal.
 - External links cannot replace the privileged workspace; a native dialog offers to copy the URL. Native copy/paste and confirmation dialogs are supported.
 
@@ -23,7 +23,7 @@ Build locally with `npm run app:build`, then `npm run app`. Build prerequisites 
 - **Usage diagram:** replaces the decorative glider with selected-agent token/cache bars, reported cost and context occupancy. Click its heading for details; unknown and provisional usage are clearly distinguished.
 - **Markdown:** headings, emphasis, lists, tables, quotes, safe links, fenced code and copy-code buttons. Raw HTML and automatic remote images are disabled.
 - **Feature windows:** use **Windows ▾** for Models & Reasoning, Providers, Workspace, Git & Worktrees, Usage, Sessions, Activity, and Tools. Drag, resize, hide/show, focus or arrange them; layouts and visibility are remembered. The separate Window Manager panel has been removed.
-- **Pi packages:** the main agent loads every package configured in your normal Pi profile (`~/.pi/agent/settings.json`), so installed tools such as web search and pi-subagents' `subagent`, `bg_wait` and `subagent_supervisor` appear in the Tools window. The bundled pi-subagents copy is only a fallback when your profile does not configure one, so it never loads twice. Nothing is installed automatically and Pi settings are not changed; project-local `.pi` resources stay untrusted. Restart the app (or web-mode desktop server) after installing packages; reloading the interface alone does not reload extensions.
+- **Pi packages:** the main agent loads every package configured in your normal Pi profile (`~/.pi/agent/settings.json`), so installed tools such as web search and pi-subagents' `subagent`, `bg_wait` and `subagent_supervisor` appear in the Tools window. pi-subagents is not bundled; install it in your Pi profile to use the delegation tools. Nothing is installed automatically and Pi settings are not changed; project-local `.pi` resources stay untrusted. Restart the app (or web-mode desktop server) after installing packages; reloading the interface alone does not reload extensions.
 - **Tool selection:** choose built-in or package-provided tools per agent and explicitly Apply while idle. None disables all tools; manual desktop subagents cannot enable shell/write/delegation tools. Current selections survive new/clone, resume/workspace changes and provider reconnects without changing Pi defaults.
 - **Appearance and photo:** the **Appearance** window holds the theme (chrome) colour, the ground colour and an optional photo. The photo is downscaled, stored locally, and turned into the **point-cloud background**: move the pointer to push or pull it and it springs back home when you leave. "Remove photo" and the two default buttons restore the plain look. Nothing is uploaded. Aggregated fleet activity is still reported to the UI (`#desktop[data-activity]`) and drives the activity window, but it paints nothing by itself.
 - **Window settings:** the **⚙** button at the top right lists every window and controls the **bottom bar**: tick a window to keep its taskbar button, untick to hide it there (less frequent windows — models, providers, workspace, Git — start out of the bottom bar). Every window stays in the **Windows** menu, **Open** shows one immediately, and the choice is remembered.
@@ -34,13 +34,13 @@ Build locally with `npm run app:build`, then `npm run app`. Build prerequisites 
 
 The desktop is **not full terminal-feature parity** and does **not** attach to unrelated terminal or pi-subagents sessions. OAuth login, arbitrary custom-provider endpoint setup, image inputs and session-tree editing remain terminal features. Installed Pi packages load for the main agent; project-local `.pi` resources are still ignored. The supported `pi-subagents` integration observes the current main session's children through bounded status/transcript updates; its terminal FleetView and custom dialogs are not embedded. Async previews are polled, not guaranteed token-by-token streams. Session management is limited to desktop-owned sessions. Main-agent tools retain filesystem/shell access; this is not a sandbox. Project-local executable resources are ignored, and ambient extensions are disabled.
 
-The main agent loads the packages configured in your Pi profile; the bundled pi-subagents fallback is used when the profile does not configure one. For an installation elsewhere, set `PI_DESKTOP_SUBAGENTS_ROOT=/absolute/package/directory`; `PI_DESKTOP_SUBAGENTS=0` disables all extensions for main. Nothing is installed automatically and global Pi settings are not changed. Tools shows the loaded packages, any load errors, and a missing-package notice.
+The main agent loads the packages configured in your Pi profile; pi-subagents is not bundled and must be installed there. For an installation elsewhere, set `PI_DESKTOP_SUBAGENTS_ROOT=/absolute/package/directory`; `PI_DESKTOP_SUBAGENTS=0` disables all extensions for main. Nothing is installed automatically and global Pi settings are not changed. Tools shows the loaded packages, any load errors, and a missing-package notice.
 
 Read [`docs/desktop.md`](docs/desktop.md) for architecture, security boundaries, tests, and limitations.
 
 ## Optional web development mode
 
-`npm run desktop` (or legacy `Pi Desktop.command`) starts the original browser interface and does open a Terminal/browser. Use **Pi Dither.app** instead for the native experience. Web mode requires installed Node 22.19+ and core Pi 0.85.1:
+`npm run desktop` (or legacy `Pi Desktop.command`) starts the original browser interface and does open a Terminal/browser. Use **Pi Dither.app** instead for the native experience. Web mode requires installed Node 22.19+ and core Pi:
 
 ```bash
 npm run desktop
@@ -53,7 +53,7 @@ Keep the authenticated local URL private. Ctrl+C stops that web server and its o
 
 The initial layout release includes a responsive workspace/engine header, a transcript section label, a persistent input strip, a static working marker, and the warm monochrome theme. It preserves core Pi's editor, transcript, tools, usage footer, warnings, and commands.
 
-Requires **core Pi 0.85.1**, **Node.js 22.19+**, and a dark terminal background. No dependency installation is needed with an existing Pi installation.
+Requires **core Pi** (developed against 0.85.1/0.87.1) and **Node.js 22.19+**, plus a dark terminal background. No dependency installation is needed with an existing Pi installation.
 
 On macOS, open `Pi Workstation.command`, or run:
 

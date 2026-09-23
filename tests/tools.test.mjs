@@ -188,7 +188,7 @@ test('real installed Pi tools: none/all/subset, runtime new/clone, resume/worksp
   let app, child;
   try {
     const host = findPi(), pi = await loadPi(host);
-    const seed = pi.SessionManager.create(project, sessionDir);
+    const seed = pi.SessionManager.create(project);
     seed.appendSessionInfo('Stored fixture');
     seed.appendThinkingLevelChange('off');
     seed.appendMessage({ role: 'user', content: 'Stored, never prompted', timestamp: 1 });
