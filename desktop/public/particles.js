@@ -214,9 +214,13 @@ export function createPhotoPool(count, width, height, random = Math.random) {
 
 // One frame of the reference site's motion: ease toward the assigned point with
 // s = 1/speed, plus the signed pointer force strength * (pointer - p) / (1+d)².
-export function stepPhotoCloud(pool, cloud, { pointer, strength = cloudStrength('push') } = {}) {
+export function stepPhotoCloud(pool, cloud, { pointer, centerX = 0, centerY = 0, strength = cloudStrength('push') } = {}) {
   const count = cloud?.count ?? 0, points = cloud?.points;
   const { positions, colors, speeds } = pool;
+  // The canvas pointer is Y-down and measured from the top-left; cloud points
+  // live in the centred, Y-up frame the photo was sampled in.
+  const pointerX = pointer ? pointer.x - centerX : 0;
+  const pointerY = pointer ? centerY - pointer.y : 0;
   for (let index = 0; index < pool.count; index++) {
     const ease = 1 / speeds[index];
     const at = index * 3, colorAt = index * 4;
@@ -225,7 +229,7 @@ export function stepPhotoCloud(pool, cloud, { pointer, strength = cloudStrength(
     const targetX = points[targetAt], targetY = points[targetAt + 1], targetZ = points[targetAt + 2];
     let forceX = 0, forceY = 0;
     if (pointer) {
-      const gapX = pointer.x - positions[at], gapY = pointer.y - positions[at + 1];
+      const gapX = pointerX - positions[at], gapY = pointerY - positions[at + 1];
       const distance = Math.hypot(gapX, gapY);
       const falloff = 1 / (1 + distance) / (1 + distance);
       forceX = strength * gapX * falloff;
@@ -258,13 +262,15 @@ export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY
   data.fill(0);
   const count = cloud?.count ?? 0, points = cloud?.points;
   const tiltX = pointer ? (pointer.x - centerX) * .02 : 0;
-  const tiltY = pointer ? (pointer.y - centerY) * .02 : 0;
+  const tiltY = pointer ? (centerY - pointer.y) * .02 : 0;
   const half = size / 2;
   for (let index = 0; index < pool.count; index++) {
     const alpha = pool.colors[index * 4 + 3];
     if (alpha <= .01 || index >= count) continue;
-    const drawX = Math.round(pool.positions[index * 3] + tiltX * pool.positions[index * 3 + 2] - half);
-    const drawY = Math.round(pool.positions[index * 3 + 1] + tiltY * pool.positions[index * 3 + 2] - half);
+    const depth = pool.positions[index * 3 + 2];
+    // Cloud space is centred and Y-up; canvas space is top-left and Y-down.
+    const drawX = Math.round(centerX + pool.positions[index * 3] + tiltX * depth - half);
+    const drawY = Math.round(centerY - (pool.positions[index * 3 + 1] + tiltY * depth) - half);
     const fromX = Math.max(0, drawX), fromY = Math.max(0, drawY);
     const toX = Math.min(canvasWidth, drawX + size), toY = Math.min(canvasHeight, drawY + size);
     if (fromX >= toX || fromY >= toY) continue;
@@ -353,7 +359,7 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
       // easing, so keep that cadence even on a 120Hz display.
       accumulator = Math.min(.1, accumulator + seconds);
       while (accumulator >= 1 / 60) {
-        stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, strength: cloudStrength(pointerMode) });
+        stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2, strength: cloudStrength(pointerMode) });
         accumulator -= 1 / 60;
       }
     }

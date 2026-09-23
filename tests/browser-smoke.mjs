@@ -146,15 +146,34 @@ try {
     })()`;
     const cloudHash = `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i] ^ d[i + 3], 16777619); return h; })()`;
     const cloudShift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+    const stableCloud = async (label) => {
+      let last = await evaluate(cloudHash);
+      for (let i = 0; i < 100; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        const next = await evaluate(cloudHash);
+        if (next === last && i > 0) return;   // two identical frames in a row
+        last = next;
+      }
+      assert.fail(`the cloud did not settle: ${label}`);
+    };
     await until(`${cloudStats}.inked > 200`);
     assert.ok((await evaluate(cloudStats)).inked > 200, 'the photo becomes a point cloud on the particle layer');
+    // Baseline with the pointer outside, so both samples are taken without the
+    // pointer parallax.
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
+    await stableCloud('the cloud forms');
     await evaluate('new Promise((resolve) => setTimeout(resolve, 2500))');
     const home = await evaluate(cloudStats);
+    // Regression guard: the cloud is centred on the canvas, not parked in a corner.
+    const cloudCanvas = await evaluate('(() => { const c = document.querySelector("#particles"); return { width: c.width, height: c.height }; })()');
+    assert.ok(Math.abs(home.cx - cloudCanvas.width / 2) < cloudCanvas.width * .05, `the cloud sits on the canvas centre (cx ${home.cx.toFixed(1)} of ${cloudCanvas.width})`);
+    assert.ok(Math.abs(home.cy - cloudCanvas.height / 2) < cloudCanvas.height * .05, `the cloud sits on the canvas centre (cy ${home.cy.toFixed(1)} of ${cloudCanvas.height})`);
     await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }))`);
     await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) > 2`);
     assert.ok(cloudShift(await evaluate(cloudStats), home) > 2, 'the pointer displaces the cloud');
     await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
     await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) < 3`);
+    await stableCloud('the cloud springs home');
     const settled = await evaluate(cloudStats);
     assert.ok(cloudShift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
     const settledHash = await evaluate(cloudHash);

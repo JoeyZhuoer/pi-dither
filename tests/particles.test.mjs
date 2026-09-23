@@ -192,6 +192,13 @@ test('stepPhotoCloud mirrors the site: spring home plus a signed 1/(1+d)^2 force
   assert.ok(pool.colors[7] < 1, 'the extra particle fades out');
   for (let step = 0; step < 400; step++) stepPhotoCloud(pool, cloud);
   assert.ok(pool.colors[7] < -.99, 'and reaches invisible');
+  // The canvas pointer is measured in the cloud's centred, Y-up frame, so the
+  // push direction is right no matter where the canvas sits on screen.
+  const corner = make(), home2 = make();
+  stepPhotoCloud(corner, cloud, { pointer: { x: 0, y: 0 }, centerX: 100, centerY: 100, strength: CLOUD_POINTERS.push });
+  stepPhotoCloud(home2, cloud, { pointer: { x: 100, y: 100 }, centerX: 100, centerY: 100, strength: CLOUD_POINTERS.push });
+  assert.ok(corner.positions[0] > home2.positions[0], 'a top-left pointer pushes right of the centred pointer');
+  assert.ok(corner.positions[1] < home2.positions[1], 'and downward in cloud space (Y-up)');
 });
 
 test('drawPhotoCloud writes tinted dots into a reusable frame buffer', () => {
@@ -215,4 +222,22 @@ test('drawPhotoCloud writes tinted dots into a reusable frame buffer', () => {
   assert.deepEqual(pixel(shift.image, 3, 2), [0, 0, 0, 0], 'without the pointer it sits at its home pixel');
   assert.equal(drawPhotoCloud(null, pool, cloud), false);
   assert.equal(drawPhotoCloud({}, pool, cloud), false, 'no 2D context means no work');
+});
+
+test('the cloud is centred on the canvas with the photo the right way up', () => {
+  const { ctx } = frame();
+  const cloud = { count: 1, points: new Float32Array(7) };
+  const pixel = (image, x, y) => Array.from(image.data.slice((y * image.width + x) * 4, (y * image.width + x) * 4 + 4));
+  const centre = { width: 40, height: 30, image: ctx.createImageData(40, 30) };
+  const pool = createPhotoPool(1, 0, 0, () => 0);   // one dot at cloud (0, 0), z -1
+  pool.colors.set([1, 1, 1, 1]);
+  drawPhotoCloud(ctx, pool, cloud, { width: 40, height: 30, buffer: centre, centerX: 20, centerY: 15 });
+  assert.deepEqual(pixel(centre.image, 19, 14), [255, 255, 255, 255], 'the cloud lands on the canvas centre');
+  // Cloud space is Y-up, so a point above the middle is drawn above the middle.
+  const above = createPhotoPool(1, 0, 0, () => 0);
+  above.colors[3] = 1; above.positions[1] = 5;
+  const upright = { width: 40, height: 30, image: ctx.createImageData(40, 30) };
+  drawPhotoCloud(ctx, above, cloud, { width: 40, height: 30, buffer: upright, centerX: 20, centerY: 15 });
+  assert.deepEqual(pixel(upright.image, 19, 10), [128, 128, 128, 255], 'a Y-up point is drawn above the centre');
+  assert.deepEqual(pixel(upright.image, 19, 22), [0, 0, 0, 0], 'and never below it');
 });

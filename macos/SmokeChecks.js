@@ -74,16 +74,36 @@ async function piDitherSmoke(stage) {
     };
     const cloudHash = () => { const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i] ^ data[i + 3], 16777619); return hash; };
     const shift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+    // 200k 3px dots keep entering and leaving pixel rows while the cloud is
+    // still relaxing, so the raw ink count wobbles a few percent. Wait for a
+    // frame that repeats before capturing any baseline.
+    const stableCloud = async (label) => {
+      let last = cloudHash(), repeats = 0;
+      for (let i = 0; i < 100; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const next = cloudHash();
+        repeats = next === last ? repeats + 1 : 0;
+        last = next;
+        if (repeats >= 2) return;
+      }
+      throw new Error('Native feature condition did not settle: ' + label);
+    };
     await wait(() => stats().inked > 200, 'photo cloud draws');
     check(stats().inked > 200, 'the photo becomes a point cloud on the particle layer');
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    // Capture the baseline with the pointer explicitly outside, so the pointer
+    // parallax is off in both the home and the settled sample.
+    document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+    await stableCloud('the cloud forms');
     const home = stats();
     document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }));
     await wait(() => shift(stats(), home) > 2, 'the pointer pushes the cloud');
     check(shift(stats(), home) > 2, 'the pointer displaces the cloud');
     document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
     await wait(() => shift(stats(), home) < 3, 'the cloud springs home');
-    check(shift(stats(), home) < 3 && Math.abs(stats().inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
+    await stableCloud('the cloud springs home');
+    const settled = stats();
+    check(shift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03),
+      `the cloud springs back to its home shape [home ${home.inked}@${home.cx.toFixed(1)},${home.cy.toFixed(1)} → settled ${settled.inked}@${settled.cx.toFixed(1)},${settled.cy.toFixed(1)}]`);
     const settledHash = cloudHash();
     // The signed force switch mirrors the site's push/pull modes.
     check(!localStorage.getItem('pi-desktop:cloud-pointer:v1'), 'push is the default without a stored choice');
