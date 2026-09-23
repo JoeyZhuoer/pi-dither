@@ -124,7 +124,7 @@ test('particle modes and the cloud pointer keep the reference constants', () => 
   assert.deepEqual(PARTICLE_CHOICES.map(([value]) => value), ['off', 'sparse', 'normal', 'dense']);
   assert.deepEqual(CLOUD_CHOICES.map(([value]) => value), ['push', 'pull']);
   assert.equal(particleMode('photo'), 'off', 'legacy photo modes are no longer particle modes');
-  assert.equal(PHOTO_POINTS, 200_000, '200k point cloud');
+  assert.equal(PHOTO_POINTS, 400_000, '400k point cloud');
   assert.equal(PHOTO_SIZE, 1, 'a 1px dot');
   assert.equal(CLOUD_RADIUS, 480, 'the pointer only reaches CLOUD_RADIUS');
   assert.equal(CLOUD_FALLOFF, 2, 'smooth quadratic window');

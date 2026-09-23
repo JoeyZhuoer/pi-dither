@@ -15,7 +15,7 @@ export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal'
 // The reference site's signed force: its default SPREAD pushes, its GATHER pulls.
 export const CLOUD_POINTERS = { push: -100, pull: 40 };
 export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
-export const PHOTO_POINTS = 200_000;
+export const PHOTO_POINTS = 400_000;
 export const PHOTO_SIZE = 1;
 export const PHOTO_SPEED = [20, 30];
 // The site's force is 1/(1+d)² with no limit, which keeps tugging the whole
@@ -326,9 +326,10 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
   const active = () => !disposed && (Boolean(cloud) || (mode !== 'off' && Boolean(field)));
   const suspended = () => !active() || Boolean(doc?.hidden) || Boolean(media?.matches);
 
-  // The pool is 4000 slots so a smaller cloud simply leaves the rest fading out
-  // (the reference site keeps a fixed pool too). It is recreated on size changes
-  // and kept across photo changes, so points fly from the old cloud to the new.
+  // The pool holds PHOTO_POINTS slots so a smaller cloud simply leaves the rest
+  // fading out (the reference site keeps a fixed pool too). It is recreated on
+  // size changes and kept across photo changes, so points fly from the old cloud
+  // to the new.
   function rebuildCloud() {
     if (!canvas || typeof photo !== 'function') { cloud = null; return; }
     try { cloud = photoCloud(photo(canvas.width, canvas.height), { max: PHOTO_POINTS, random: source }); }
