@@ -7,7 +7,8 @@ const validRect = (value) => isObject(value) && rectKeys.every((key) => Number.i
 // Compact sizes by purpose; unknown utility IDs retain a roomy generic
 // fallback. Manual children alone retain the main-relative cap. Opening
 // geometry is separate: the minimum usable width with a medium height (see
-// workingRect), and the compact presets are the Arrange/anchor layout.
+// workingRect), and the compact presets are the anchor layout for hidden and
+// legacy windows.
 const profiles = {
   models: [700, 540],
   providers: [620, 500],
@@ -138,7 +139,7 @@ export class DesktopWindows {
     const win = { id, title, kind, element, task, titlebar, body: element.querySelector('.window-body'), index,
       rect: { ...layoutRect }, layoutRect, minimized, taskbar,
       // Legacy zoomed=true cannot distinguish automatic from manual sizing.
-      // Preserve it conservatively until Arrange or an explicit layout reset.
+      // Preserve it conservatively until an explicit layout reset.
       sizeMode: saved?.sizeMode ?? ((saved?.zoomed ?? legacyCustom) ? 'manual' : 'compact'),
       zoomed: saved?.sizeMode ? saved.sizeMode !== 'compact' : typeof saved?.zoomed === 'boolean' ? saved.zoomed : legacyCustom,
       restore: validRect(saved?.restore) ? { ...saved.restore } : null, restoreMode: saved?.restoreMode ?? 'manual' };
@@ -356,12 +357,6 @@ export class DesktopWindows {
     win.cancelPointer?.(); win.element.remove(); win.task.remove(); this.windows.delete(id);
     this.focusAfterRemoval(win, hadFocus);
     delete this.saved[id]; this.save(); this.changed();
-  }
-  arrange() {
-    for (const win of this.windows.values()) {
-      win.restore = null; win.zoomed = false; win.sizeMode = 'compact'; win.layoutRect = this.defaultRect(win.kind, win.index, win.id); this.reflow(win);
-    }
-    this.save(); this.changed();
   }
   save() {
     // Preserve not-yet-added utilities during startup; all live windows precede old entries.

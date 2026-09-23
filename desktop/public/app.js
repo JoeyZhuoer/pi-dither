@@ -1,7 +1,8 @@
 import { DesktopWindows, nextSubagentIndex, subagentIndexFromName } from './windows.js';
 import { installDelegatedObservers, aggregateActivity, delegationNotice, delegationRows } from './delegated.js';
 import { renderMarkdown } from './markdown.js';
-import { installFeatureWindows, installUsageDiagram } from './features.js';
+import { installFeatureWindows } from './features.js';
+import { installWidgets } from './widgets.js';
 import { createBackground } from './background.js';
 import { createParticles } from './particles.js';
 import { createInspectionPanel } from './inspection.js';
@@ -19,7 +20,7 @@ const panels = new Map();
 const states = new Map();
 const drafts = new Map();
 const readOnlyTools = ['read', 'grep', 'find', 'ls'];
-let connected = false, workspace = '', version = '', desktopVersion = '', contextId, hasSnapshot = false, features, usageDiagram;
+let connected = false, workspace = '', version = '', desktopVersion = '', contextId, hasSnapshot = false, features, widgets;
 let usageAgentId = 'main';
 const featureState = () => ({ connected: connected && ['0.3.0', '0.4.0', '0.5.0'].includes(desktopVersion), cwd: workspace, contextId, agents: [...states.values()] });
 let token = new URLSearchParams(location.hash.slice(1)).get('token');
@@ -344,11 +345,16 @@ function renderAgent(state) {
   if (badges) badges.replaceChildren(...(!Array.isArray(state.activeTools) ? [meta('Tool state unavailable')] : state.activeTools.length ? state.activeTools.map((name) => meta(`+ ${name}`)) : [meta('No tools enabled')]));
   updateControls(panel); updateFleet();
 }
-function updateUsageDiagram() {
+// The widget rail follows the last focused real agent window, keeping that choice
+// while utility/draft windows are focused.
+function selectedAgent() {
   const selected = windows.list().find((win) => win.focused && states.has(win.id));
   if (selected) usageAgentId = selected.id;
-  const agent = states.get(usageAgentId) || states.get('main');
-  usageDiagram?.update(agent, connected);
+  return states.get(usageAgentId) || states.get('main');
+}
+function updateWidgets() {
+  selectedAgent();
+  widgets?.refresh(featureState());
 }
 function updateFleet() {
   if (applyingSnapshot) return;
@@ -358,7 +364,7 @@ function updateFleet() {
   $('#desktop').dataset.activity = activity;
   observers.reconcile(states.get('main'), contextId, connected);
   features?.update(featureState());
-  updateUsageDiagram();
+  updateWidgets();
   const toolsSupported = Array.isArray(states.get('main')?.availableTools) && Array.isArray(states.get('main')?.activeTools);
   for (const win of drafts.values()) {
     for (const input of win.body.querySelectorAll('.draft-tools input')) input.disabled = !connected || !toolsSupported || win.launchPending;
@@ -490,11 +496,19 @@ installComboboxes(document);
 const background = createBackground({ storage: localStorage, onPhotoChange: () => particles.refreshPhoto() });
 const particles = createParticles({ canvas: $('#particles'), storage: localStorage, photo: (width, height) => background.photoSample(width, height) });
 features = installFeatureWindows({ windows, api, toast, getState: featureState, background, particles });
-usageDiagram = installUsageDiagram($('#usage-diagram'), () => {
-  if (desktopVersion) features.open('usage');
-  else toast('Detailed usage requires the v0.3 desktop server.');
+widgets = installWidgets({
+  root: document.body,
+  storage: localStorage,
+  getState: featureState,
+  getSelectedAgent: selectedAgent,
+  api,
+  openUsage: () => {
+    if (desktopVersion) features.open('usage');
+    else toast('Detailed usage requires the v0.3 desktop server.');
+  },
+  document,
 });
-updateUsageDiagram();
+updateWidgets();
 const menu = $('#window-menu'), menuButton = $('#window-menu-toggle');
 function closeMenu() { menu.hidden = true; menuButton.setAttribute('aria-expanded', 'false'); }
 menuButton.addEventListener('click', () => { menu.hidden = !menu.hidden; menuButton.setAttribute('aria-expanded', String(!menu.hidden)); });
@@ -547,17 +561,10 @@ document.addEventListener('keydown', (event) => {
   event.preventDefault(); toggleSearch(search);
 });
 windows.onChange((list) => {
-  updateUsageDiagram();
+  updateWidgets();
   for (const button of menu.querySelectorAll('[data-feature]')) button.setAttribute('aria-pressed', String(list.some((win) => win.id === button.dataset.feature && !win.hidden)));
 });
 $('#add-agent').addEventListener('click', () => { if (hasSnapshot) addDraft(); else toast('Wait for the desktop to connect.'); });
-$('#arrange').addEventListener('click', () => { windows.arrange(); toast('Window positions reset.'); });
 $('.wordmark').addEventListener('click', (event) => { event.preventDefault(); windows.show('main'); });
 $('#help').addEventListener('click', () => $('#help-dialog').showModal());
-function clock() {
-  const now = new Date();
-  $('#date').textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
-  $('#clock').textContent = now.toLocaleTimeString('en-GB'); $('#clock').dateTime = now.toISOString();
-}
-clock(); setInterval(clock, 1000);
 eventStream();

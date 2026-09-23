@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/features.css">
   <link rel="stylesheet" href="/inspection.css">
   <link rel="stylesheet" href="/combobox.css">
+  <link rel="stylesheet" href="/widgets.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -21,7 +22,7 @@
     <nav aria-label="Desktop controls">
       <button id="window-menu-toggle" aria-expanded="false" aria-controls="window-menu">Windows ▾</button>
       <button id="add-agent">+ Subagent</button>
-      <button id="arrange">Arrange</button>
+      <button id="widgets" aria-haspopup="dialog">Widgets</button>
       <button id="settings" aria-haspopup="dialog" aria-label="Window settings" title="Window settings">⚙</button>
       <button id="help">?</button>
     </nav>
@@ -39,24 +40,19 @@
   </nav>
   <div id="connection" role="status">CONNECTING TO LOCAL PI…</div>
   <main id="desktop" aria-label="Agent desktop"></main>
-  <aside class="clock-widget" aria-label="Local clock">
-    <div class="utility-title">Clock Tool 1.1 <span>LOCAL</span></div>
-    <div id="date"></div>
-    <div class="clock-line"><time id="clock"></time><span class="clock-mark" aria-hidden="true">▪ · ▪</span></div>
-  </aside>
   <aside class="about-widget">
     <div class="utility-title">Pi Dither <span>0.4</span></div>
     <div class="about-content"><span class="pi-glyph" aria-hidden="true">π</span><p>Local tools. Open-ended thought.<br>One main thread. Room for others.</p></div>
   </aside>
-  <aside id="usage-diagram" class="usage-widget" aria-label="Selected agent usage"></aside>
   <footer class="taskbar"><span class="taskbar-label">WINDOWS /</span><div id="tasks"></div><span id="fleet-count">0 ACTIVE</span></footer>
   <div id="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="help-dialog">
     <div class="utility-title">Desktop / Field guide</div>
     <div class="help-body">
       <h2>Your main agent gets the big window.</h2>
-      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Any manual resize is saved for that window. Hidden windows stay hidden. Arrange resets the layout.</p>
-      <p>The desktop usage chart follows the selected agent. Click its heading for details.</p>
+      <p>Drag title bars. Resize from the lower-right corner. Minimize to the taskbar. Any manual resize is saved for that window. Hidden windows stay hidden.</p>
+      <p>The <strong>Widgets</strong> button opens the widget manager: enable, size or reset the desktop rail. Widgets snap to a cell grid — drag a title bar or focus it and use the arrow keys.</p>
+      <p>The usage widget follows the selected agent. Click its heading for details.</p>
       <p>Keyboard: focus a title bar and use arrow keys to move; Shift + arrows to resize. Ctrl/Cmd + Enter sends a message.</p>
       <p>Press Ctrl/Cmd + F in the main window to search the whole conversation — answers, reasoning and tool output. Enter and Shift + Enter step through matches, Escape closes and clears the search.</p>
       <p>Use <strong>+ Subagent</strong> to create a manual draft, then Launch to start it. They are separate core Pi sessions defaulting to read, grep, find and ls tools.</p>

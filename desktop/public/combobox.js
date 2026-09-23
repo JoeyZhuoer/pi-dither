@@ -98,12 +98,13 @@ export function installComboboxes(root = globalThis.document) {
         select.dispatchEvent(new win.Event('change', { bubbles: true }));
       }
     }
+    const listParent = () => select.closest?.('dialog') || doc.body;
     const entry = {
       sync, position, trigger, list,
       repair() {
         // Reconstruction may keep the select but discard/misplace its generated UI.
         if (select.nextElementSibling !== trigger) select.after(trigger);
-        if (list.parentNode !== doc.body) doc.body.append(list);
+        if (list.parentNode !== listParent()) listParent().append(list);
       },
       close() { list.hidden = true; trigger.setAttribute('aria-expanded', 'false'); trigger.removeAttribute('aria-activedescendant'); search = ''; if (opened === entry) opened = null; },
       destroy() {
@@ -116,7 +117,7 @@ export function installComboboxes(root = globalThis.document) {
     };
     const observer = new win.MutationObserver(sync);
     try {
-      select.after(trigger); doc.body.append(list);
+      select.after(trigger); listParent().append(list);
       sync();
       observer.observe(select, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['disabled', 'selected', 'label', 'value', 'hidden', 'multiple', 'size', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-invalid', 'required'] });
       // Property assignments do not produce mutation records. Preserve native setters.

@@ -360,53 +360,46 @@ try {
   await evaluate('document.querySelector("#help").click(); document.querySelector("#help-dialog").close()');
   assert.equal(await evaluate('document.querySelectorAll(".sub-window").length'), 0, 'no child shell exists before an explicit launch or delegation');
   assert.equal(await evaluate('document.querySelector(".life-widget")'), null, 'decorative glider replaced');
-  assert.equal(await evaluate('document.querySelector("#usage-diagram").dataset.agentId'), 'main');
+  assert.equal(await evaluate(`document.querySelector('[data-testid="widget-usage"] .widget-body').dataset.agentId`), 'main');
   if (app) {
     assert.equal(await evaluate('document.querySelector(".usage-context").getAttribute("aria-valuenow")'), '25');
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /\$0\.1234/);
   }
-  // The right rail reads as one column: the usage widget shares the clock widget's
-  // right offset and width at the normal and the narrow layout, and the stylesheet
-  // declares exactly that (a real computed check plus the source of truth).
+  // The widget rail stacks the clock and usage widgets in one fixed two-cell layer;
+  // both keep the layer's right offset and width until the mobile breakpoint.
   const railGap = "(() => {" +
-    "const clock = getComputedStyle(document.querySelector('.clock-widget'));" +
-    "const usage = getComputedStyle(document.querySelector('#usage-diagram'));" +
-    "const clockTitle = getComputedStyle(document.querySelector('.clock-widget .utility-title'));" +
-    "const usageTitle = getComputedStyle(document.querySelector('#usage-diagram .utility-title'));" +
-    "return { right: [clock.right, usage.right], width: [clock.width, usage.width]," +
-    " title: [clockTitle.fontSize + '/' + clockTitle.lineHeight, usageTitle.fontSize + '/' + usageTitle.lineHeight] };" +
+    "const clock = getComputedStyle(document.querySelector('[data-testid=\"widget-clock\"]'));" +
+    "const usage = getComputedStyle(document.querySelector('[data-testid=\"widget-usage\"]'));" +
+    "return { right: [clock.right, usage.right], width: [clock.width, usage.width] };" +
     "})()";
   const wideRail = await evaluate(railGap);
   assert.equal(wideRail.right[0], wideRail.right[1], `usage and clock share the right offset (${wideRail.right.join(' vs ')})`);
   assert.equal(wideRail.width[0], wideRail.width[1], `usage and clock share the width (${wideRail.width.join(' vs ')})`);
-  assert.equal(wideRail.title[0], wideRail.title[1], `usage and clock share the title rhythm (${wideRail.title.join(' vs ')})`);
+  assert.equal(wideRail.width[0], '258px', `the widget layer is 258px wide (${wideRail.width[0]})`);
   await rpc('Emulation.setDeviceMetricsOverride', { width: 900, height: 960, deviceScaleFactor: 1, mobile: false });
   await until('innerWidth === 900');
   await new Promise((done) => setTimeout(done, 400));
   const narrowRail = await evaluate(railGap);
-  assert.equal(narrowRail.right[0], narrowRail.right[1], `the narrow rail keeps one right offset (${narrowRail.right.join(' vs ')})`);
-  assert.equal(narrowRail.width[0], narrowRail.width[1], `the narrow rail keeps one width (${narrowRail.width.join(' vs ')})`);
-  assert.equal(narrowRail.width[0], '215px', `the narrow rail is 215px wide (${narrowRail.width[0]})`);
+  assert.equal(narrowRail.right[0], narrowRail.right[1], `the 900px rail keeps one right offset (${narrowRail.right.join(' vs ')})`);
+  assert.equal(narrowRail.width[0], narrowRail.width[1], `the 900px rail keeps one width (${narrowRail.width.join(' vs ')})`);
   await rpc('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
   await until('innerWidth === 1440');
   await new Promise((done) => setTimeout(done, 400));
-  const railCss = await evaluate(`(async () => (await (await fetch('/styles.css')).text()))()`);
+  const railCss = await evaluate(`(async () => (await (await fetch('/widgets.css')).text()))()`);
   const declared = (rule, key) => (new RegExp(`(?:^|;)${key}:([^;]+)`).exec(rule) || [])[1];
-  const usageRule = (/\.usage-widget\{([^}]*)\}/.exec(railCss) || [])[1] || '';
-  const clockRule = (/\.clock-widget\{([^}]*)\}/.exec(railCss) || [])[1] || '';
-  assert.equal(declared(usageRule, 'right'), declared(clockRule, 'right'), 'the usage rule declares the clock right offset');
-  assert.equal(declared(usageRule, 'width'), declared(clockRule, 'width'), 'the usage rule declares the clock width');
-  assert.equal(declared(usageRule, 'bottom'), '56px', 'usage stays anchored above the taskbar');
+  const layerRule = (/#widget-layer\{([^}]*)\}/.exec(railCss) || [])[1] || '';
+  assert.equal(declared(layerRule, 'right'), '25px', 'the rail declares the right offset');
+  assert.equal(declared(layerRule, 'top'), '66px', 'the rail starts below the menu');
+  assert.equal(declared(layerRule, 'width'), '258px', 'the rail declares the two-cell width');
   const narrowBlock = (() => {
-    const at = railCss.indexOf('@media(max-width:1000px)');
+    const at = railCss.indexOf('@media(max-width:760px)');
     let index = railCss.indexOf('{', at), depth = 0;
     const start = index;
     for (; index < railCss.length; index++) { if (railCss[index] === '{') depth++; else if (railCss[index] === '}') { depth--; if (!depth) break; } }
     return railCss.slice(start, index + 1);
   })();
-  assert.match(narrowBlock, /\.clock-widget\{width:215px/, 'the clock shrinks in the narrow layout');
-  assert.match(narrowBlock, /\.usage-widget\{width:215px/, 'the usage widget shrinks the same way');
-  const chartHeading = await evaluate('(()=>{const e=document.querySelector("#usage-diagram button"),r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,reachable:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("#usage-diagram")!==null}})()');
+  assert.match(narrowBlock, /#widget-layer\{position:relative/, 'the rail becomes static on mobile');
+  const chartHeading = await evaluate(`(()=>{const e=document.querySelector('[data-testid="widget-usage"] button'),r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,reachable:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('[data-testid="widget-usage"]')!==null}})()`);
   assert.equal(chartHeading.reachable, true, 'chart heading is not blocked by the desktop or default windows');
   for (const type of ['mousePressed', 'mouseReleased']) await rpc('Input.dispatchMouseEvent', { type, x: chartHeading.x, y: chartHeading.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
   await until('document.querySelector("[data-window-id=usage]").hidden === false');
@@ -435,8 +428,10 @@ try {
   assert.equal(await evaluate('document.querySelector(".main-window").offsetWidth'), oldWidth + 10);
   await evaluate(`document.querySelector('.main-window button[aria-label="Minimize window"]').click()`);
   assert.equal(await evaluate('document.querySelector(".main-window").hidden'), true);
-  await evaluate('document.querySelector("#tasks button").click(); document.querySelector("#arrange").click()');
+  await evaluate('document.querySelector("#tasks button").click()');
   assert.equal(await evaluate('document.querySelector(".main-window").hidden'), false);
+  assert.equal(await evaluate('document.querySelector("#arrange") === null'), true, 'no Arrange control remains');
+  assert.equal(await evaluate('document.querySelector("#widgets") !== null'), true, 'the widget manager replaced it');
   // Capture a clean, non-synthetic startup view before exercising the fixture conversation.
   await evaluate('document.querySelector("#toast").hidden=true');
   await mkdir(resolve('.local'), { recursive: true });
@@ -467,7 +462,7 @@ try {
     assert.deepEqual(await evaluate(`(() => { const child=document.querySelector('[data-window-id="${childId}"]'); return ['left','top','width','height'].map(key=>child.style[key]); })()`), draftGeometry, 'launched child inherits manually chosen draft geometry');
     assert.equal(await evaluate(`JSON.parse(localStorage.getItem('pi-desktop:layout:v1'))[${JSON.stringify(childId)}].sizeMode`), 'manual', 'draft sizing intent survives replacement');
     await checkManualInspectionBrowser({ app, childId, evaluate, until });
-    await until(`document.querySelector('#usage-diagram').dataset.agentId === ${JSON.stringify(childId)}`);
+    await until(`document.querySelector('[data-testid="widget-usage"] .widget-body').dataset.agentId === ${JSON.stringify(childId)}`);
     assert.equal(await evaluate('window.pwned'), undefined);
     assert.equal(await evaluate('document.querySelectorAll(".message-body img").length'), 0);
     assert.equal(await evaluate('document.querySelector(".message.assistant .markdown h1")?.textContent'), 'Review result');
@@ -613,7 +608,7 @@ try {
   await rpc('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await until('innerWidth === 390');
   assert.ok(await evaluate('document.documentElement.scrollWidth <= innerWidth'), 'mobile view has no horizontal overflow');
-  assert.ok(await evaluate('document.querySelector("#usage-diagram").offsetHeight > 0'), 'usage chart remains available on mobile');
+  assert.ok(await evaluate(`document.querySelector('[data-testid="widget-usage"]').offsetHeight > 0`), 'usage chart remains available on mobile');
   assert.deepEqual(await evaluate('JSON.parse(localStorage.getItem("pi-desktop:layout:v1"))'), savedLayouts, 'mobile reflow does not overwrite desktop preferences');
   await rpc('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
   await until('innerWidth === 1440');
@@ -631,8 +626,50 @@ try {
     await until('document.querySelector(".usage-context").getAttribute("aria-valuenow") === null');
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
+  // Desktop widgets: #widgets replaced #arrange, the rail renders the built-in clock,
+  // the manager toggles it, and a synthetic pointer drag snaps and persists a move.
+  assert.equal(await evaluate('document.querySelector("#arrange")'), null, 'the Arrange control is gone');
+  assert.equal(await evaluate('document.querySelector("#widgets")?.textContent'), 'Widgets');
+  assert.equal(await evaluate('document.querySelector("#widgets")?.getAttribute("aria-haspopup")'), 'dialog');
+  assert.equal(await evaluate('document.querySelector("#widget-layer") !== null'), true, 'the widget layer exists');
+  assert.equal(await evaluate('document.querySelector(".widget-clock #clock")?.textContent.length > 0'), true, 'the built-in clock renders in the layer');
+  await evaluate('document.querySelector("#widgets").click()');
+  await until('document.querySelector("#widget-manager")?.open === true');
+  await evaluate(`{ const box = document.querySelector('[data-testid="widget-enable-clock"]'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }`);
+  await until('document.querySelector(".widget-clock").hidden === true');
+  assert.match(await evaluate('localStorage.getItem("pi-desktop:widgets:v1")'), /"type":"clock","enabled":false/, 'disabling persists in the widget store');
+  await evaluate(`{ const box = document.querySelector('[data-testid="widget-enable-clock"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); }`);
+  await until('document.querySelector(".widget-clock").hidden === false');
+  // The size control is a themed combobox inside the modal manager: its list must
+  // render in the dialog's top layer instead of behind the backdrop.
+  await evaluate(`document.querySelector('[data-testid="widget-size-usage"]').nextElementSibling.click()`);
+  const sizeList = await evaluate(`(() => { const select = document.querySelector('[data-testid="widget-size-usage"]'); const list = document.getElementById(select.nextElementSibling.getAttribute('aria-controls')); const option = list.querySelector('.pi-combobox-option'); const r = option.getBoundingClientRect(); return { open: !list.hidden, hit: document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('.pi-combobox-option') === option }; })()`);
+  assert.equal(sizeList.open, true, 'the size list opens');
+  assert.equal(sizeList.hit, true, 'the size list renders above the modal dialog');
+  await evaluate(`{ const select = document.querySelector('[data-testid="widget-size-usage"]'); const list = document.getElementById(select.nextElementSibling.getAttribute('aria-controls')); list.querySelectorAll('.pi-combobox-option')[0].click(); }`);
+  assert.equal(await evaluate('document.querySelector(".widget-usage").style.height'), '158px', 'the usage widget resizes to 2x2');
+  // Dragging the clock down pushes the usage widget into the next free row.
+  const widgetTop = () => evaluate('document.querySelector(".widget-clock").style.top');
+  const usageTop = () => evaluate('document.querySelector(".widget-usage").style.top');
+  await evaluate(`(() => {
+    const bar = document.querySelector('.widget-clock .widget-titlebar');
+    const box = bar.getBoundingClientRect();
+    const x = box.x + 6, y = box.y + box.height / 2;
+    bar.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y }));
+    document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y + 82 }));
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y + 82 }));
+  })()`);
+  assert.equal(await widgetTop(), '82px', 'a synthetic pointer drag moves the clock one row');
+  assert.equal(await usageTop(), '246px', 'the overlapped usage widget is pushed clear');
+  const storedClockY = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:widgets:v1")).items.find((item) => item.type === "clock").y');
+  const storedUsageY = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:widgets:v1")).items.find((item) => item.type === "usage").y');
+  assert.deepEqual([storedClockY, storedUsageY], [1, 3], 'the drop and the push are persisted');
+  await evaluate('document.querySelector("#widget-manager button.widgets-reset").click()');
+  assert.equal(await widgetTop(), '0px', 'Reset widgets restores the clock cell');
+  assert.equal(await usageTop(), '164px', 'Reset widgets restores the usage cell');
+  await evaluate('document.querySelector("#widget-manager").close()');
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, in-window reasoning, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, in-window reasoning, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');

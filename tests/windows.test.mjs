@@ -102,6 +102,7 @@ test('compact presets stay purpose-specific while windows open at minimum width 
   for (const id of ids) {
     const win = addUtility(manager, id);
     compact.add(`${win.rect.w},${win.rect.h}`);
+    assert.equal(win.sizeMode, 'compact', id + ' keeps its compact preset while hidden');
     assert.deepEqual(win.layoutRect, manager.defaultRect('utility', 0, id));
     manager.show(id);
     // Every purpose opens at the minimum usable width with a medium height.
@@ -111,11 +112,10 @@ test('compact presets stay purpose-specific while windows open at minimum width 
     opened.add(`${win.rect.w},${win.rect.h}`);
     manager.place(win, { ...win.rect, w: 410, h: 330 });
     assert.deepEqual(win.layoutRect, { ...win.rect });
-    manager.arrange(); manager.show(id);
-    assert.equal(win.rect.w, 400); assert.equal(win.rect.h, 540);
   }
   assert.equal(compact.size, ids.length, 'compact presets remain purpose-specific');
   assert.equal(opened.size, 1, 'opening size no longer varies by purpose');
+  assert.equal(manager.arrange, undefined, 'there is no Arrange control to reset the layout');
   const fallback = addUtility(manager, 'arbitrary');
   assert.equal(fallback.rect.w, 820, 'unknown utilities keep a roomy compact preset');
   manager.show(fallback.id); assert.equal(fallback.rect.w, 400);
@@ -153,12 +153,12 @@ test('delegated observers use former starter right-side anchors and migrate only
   globalThis.matchMedia = () => ({ matches: false });
   desktop.clientWidth = 1400; browser.emit('resize');
   assert.deepEqual(b.rect, preferred);
-  manager.arrange();
-  assert.equal(custom.rect.y, 105);
-  assert.equal(custom.rect.x + custom.rect.w, desktop.clientWidth - 25);
+  const customAnchor = manager.defaultRect('delegated', 0, 'custom');
+  assert.equal(customAnchor.y, 105);
+  assert.equal(customAnchor.x + customAnchor.w, desktop.clientWidth - 25);
 });
 
-test('purpose profiles preserve manual/legacy rectangles, hidden state, mobile preference and Arrange', (t) => {
+test('purpose profiles preserve manual/legacy rectangles, hidden state and mobile preference', (t) => {
   const f = fixture(t, JSON.stringify({ tools: { x: 50, y: 60, w: 680, h: 530, hidden: true } }));
   const { manager, desktop, tasks, browser } = f;
   addMain(manager);
@@ -179,11 +179,15 @@ test('purpose profiles preserve manual/legacy rectangles, hidden state, mobile p
   globalThis.matchMedia = () => ({ matches: false });
   desktop.clientWidth = 1400; desktop.clientHeight = 900; browser.emit('resize');
   assert.deepEqual(copy.rect, custom); assert.deepEqual(mobileNew.rect, preferred);
-  restored.hide(copy.id); restored.arrange();
-  assert.equal(copy.element.hidden, true); assert.equal(copy.zoomed, false);
-  assert.deepEqual(copy.layoutRect, restored.defaultRect('delegated', 0, copy.id));
+  restored.hide(copy.id);
+  assert.equal(copy.element.hidden, true);
+  assert.deepEqual(copy.layoutRect, custom, 'hiding keeps the manual layout');
   assert.deepEqual(mobileNew.layoutRect, restored.defaultRect('utility', 0, 'workspace'));
-  restored.show(copy.id); assert.equal(copy.rect.w, 400); assert.equal(copy.rect.h, 540);
+  // A fresh window still keeps its compact preset and opens at the shared geometry.
+  const fresh = restored.add({ id: 'fresh', title: 'Fresh', kind: 'delegated', hidden: true });
+  assert.equal(fresh.sizeMode, 'compact');
+  assert.deepEqual(fresh.layoutRect, restored.defaultRect('delegated', 0, fresh.id));
+  restored.show(fresh.id); assert.equal(fresh.rect.w, 400); assert.equal(fresh.rect.h, 540);
 });
 
 const addMain = (manager) => manager.add({ id: 'main', title: 'Main', kind: 'main' });
@@ -271,7 +275,8 @@ test('DesktopWindows auto-zooms defaults once and preserves manual sizing over h
   manager.hide('models');
   const restored = new DesktopWindows(desktop, tasks); addMain(restored); const reopened = addUtility(restored);
   assert.equal(reopened.element.hidden, true); restored.show('models'); assert.deepEqual(reopened.rect, adjusted);
-  restored.arrange(); assert.equal(reopened.zoomed, false); restored.show('models'); assert.equal(reopened.rect.w, 400);
+  const fresh = addUtility(restored, 'providers');
+  restored.show('providers'); assert.equal(fresh.rect.w, 400, 'a fresh utility still opens at the minimum width');
 });
 
 test('opening geometry recovers from a narrow native viewport and retains its mode through reload', (t) => {
@@ -296,11 +301,12 @@ test('opening geometry recovers from a narrow native viewport and retains its mo
   assert.equal(focused, models); restored.destroy();
 });
 
-test('Arrange restores automatic fitting on selection; manual overrides, maximize restore and mobile remain safe', (t) => {
+test('opening geometry fits automatically while manual overrides, maximize restore and mobile remain safe', (t) => {
   const f = fixture(t, JSON.stringify({ main: { x: 35, y: 25, w: 700, h: 500, zoomed: true } }));
   const { manager, desktop, browser } = f; const main = addMain(manager);
+  // Legacy zoomed layouts stay manual; the removed Arrange control no longer resets them.
   manager.show('main'); assert.equal(main.rect.w, 700); assert.equal(main.sizeMode, 'manual');
-  manager.arrange(); manager.show('main'); assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 610); assert.equal(main.rect.h, 540);
+  manager.autoSize(main); assert.equal(main.sizeMode, 'auto'); assert.equal(main.rect.w, 610); assert.equal(main.rect.h, 540);
   button(main, 'Maximize or restore main window').emit('click'); assert.equal(main.restoreMode, 'auto');
   desktop.clientWidth = 1000; desktop.clientHeight = 700; browser.emit('resize');
   button(main, 'Maximize or restore main window').emit('click');
@@ -311,8 +317,7 @@ test('Arrange restores automatic fitting on selection; manual overrides, maximiz
   globalThis.matchMedia = () => ({ matches: true }); desktop.clientWidth = 390; browser.emit('resize');
   assert.equal(manager.autoSize(), false); assert.deepEqual(main.layoutRect, preferred);
   globalThis.matchMedia = () => ({ matches: false }); desktop.clientWidth = 1400; browser.emit('resize');
-  assert.deepEqual(main.rect, preferred); manager.arrange(); manager.show('main'); assert.equal(main.sizeMode, 'auto');
-  manager.arrange(); assert.equal(main.sizeMode, 'compact'); assert.equal(main.zoomed, false);
+  assert.deepEqual(main.rect, preferred);
 });
 
 test('main shrinks to a narrow column while opening stays roomy', (t) => {
@@ -451,7 +456,7 @@ test('DesktopWindows validates corrupt, non-object, oversized and denied localSt
   for (const raw of ['null', '[]', 'true', '42', '"text"', '{broken', ' '.repeat(100001)]) {
     const { manager } = fixture(t, raw); assert.doesNotThrow(() => addMain(manager)); assert.equal(Object.getPrototypeOf(manager.saved), null);
   }
-  const { manager } = fixture(t, null, true); assert.doesNotThrow(() => { addMain(manager); manager.hide('main'); manager.arrange(); });
+  const { manager } = fixture(t, null, true); assert.doesNotThrow(() => { addMain(manager); manager.hide('main'); manager.save(); });
 });
 
 test('DesktopWindows accepts old layout but rejects invalid geometry and non-boolean visibility', (t) => {
@@ -464,7 +469,7 @@ test('DesktopWindows accepts old layout but rejects invalid geometry and non-boo
   assert.equal({}.hidden, undefined);
 });
 
-test('DesktopWindows bounds agents below main while leaving utilities roomy on resize and arrange', (t) => {
+test('DesktopWindows bounds agents below main while leaving utilities roomy on resize', (t) => {
   const { manager, desktop, browser } = fixture(t); const main = addMain(manager);
   const child = manager.add({ id: 'child', title: 'Child' }), utility = addUtility(manager);
   manager.place(utility, { x: 100, y: 100, w: 1100, h: 700 });
@@ -479,7 +484,7 @@ test('DesktopWindows bounds agents below main while leaving utilities roomy on r
   assert.ok(child.rect.w < main.rect.w); assert.ok(child.rect.h < main.rect.h);
   manager.place(utility, { x: NaN, y: Infinity, w: 'bad', h: null });
   assert.ok(Object.values(utility.rect).every(Number.isFinite));
-  manager.arrange(); assert.equal(utility.element.hidden, true);
+  manager.show(utility.id); manager.hide(utility.id); assert.equal(utility.element.hidden, true);
 });
 
 test('DesktopWindows keyboard movement/resizing resets maximize restoration without hijacking control keys', (t) => {
@@ -531,4 +536,9 @@ test('DesktopWindows pointer movement/resizing filters pointer IDs and cancels s
   browser.emit('blur'); assert.equal(utility.cancelPointer, null);
   handle.emit('pointerdown', { button: 0, pointerId: 4, clientX: 0, clientY: 0 }); manager.remove('models');
   assert.equal(handle.hasPointerCapture(4), false); assert.equal(browser.listeners.get('pointermove').size, 0);
+});
+
+test('DesktopWindows no longer exposes an Arrange reset (the widget manager replaced it)', (t) => {
+  const { manager } = fixture(t);
+  assert.equal(manager.arrange, undefined);
 });

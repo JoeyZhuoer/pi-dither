@@ -24,6 +24,8 @@ const assets = new Map([
   ['/combobox.js', ['combobox.js', 'text/javascript']], ['/combobox.css', ['combobox.css', 'text/css']],
   ['/markdown.js', ['markdown.js', 'text/javascript']], ['/markdown.css', ['markdown.css', 'text/css']],
   ['/features.js', ['features.js', 'text/javascript']], ['/features.css', ['features.css', 'text/css']],
+  ['/widgets.js', ['widgets.js', 'text/javascript']], ['/widgets.css', ['widgets.css', 'text/css']],
+  ['/widget-usage.js', ['widget-usage.js', 'text/javascript']], ['/widget-model.js', ['widget-model.js', 'text/javascript']],
   ['/assets/VT323-Regular.ttf', ['assets/VT323-Regular.ttf', 'font/ttf']],
   ['/assets/OFL.txt', ['assets/OFL.txt', 'text/plain']],
 ]);

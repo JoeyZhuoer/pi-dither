@@ -22,13 +22,8 @@ export async function checkWindowsDOM({ DesktopWindows }) {
       engine.resize(); assert(JSON.stringify(main.layoutRect) === preferred, 'mobile does not overwrite desktop preference');
       return 'mobile stacked layout preserves sizing preference';
     }
-    assert(main.sizeMode === 'auto' && main.rect.w === 610, 'main opens at its roomy width');
-    engine.place(main, { x: 20, y: 20, w: 380, h: 340 });
-    assert(main.rect.w === 380 && main.rect.h === 340, 'main shrinks below the old 610x440 floor');
-    engine.place(main, { x: 20, y: 20, w: 100, h: 100 });
-    assert(main.rect.w === 360 && main.rect.h === 320, 'main floor is 360x320');
-    engine.arrange(); main.task.click();
-    assert(main.rect.w === 610 && main.rect.h === 456, 'Arrange fits main back to its roomy opening size');
+    assert(main.sizeMode === 'auto' && main.rect.w === 610 && main.rect.h === 456, 'main opens at its roomy width and medium height');
+    assert(typeof engine.arrange === 'undefined', 'no Arrange control remains');
     assert(!main.element.querySelector('[aria-label="Zoom to working size"]'), 'no separate sizing button');
     const child = engine.add({ id: 'child', kind: 'subagent', title: 'Child' });
     const observer = engine.add({ id: 'observer', kind: 'delegated', title: 'Observer' });
@@ -63,18 +58,20 @@ export async function checkWindowsDOM({ DesktopWindows }) {
     engine.hide(models.id); const focus = engine.focused;
     desktop.style.width = '1200px'; engine.resize();
     assert(models.element.hidden && engine.focused === focus, 'native resize neither reveals nor focuses hidden windows');
-    models.task.click(); assert(models.rect.w === 700, 'hide/show keeps manual geometry');
-    engine.arrange(); models.task.click(); assert(models.sizeMode === 'auto' && models.rect.w === fixedWidth, 'Arrange resets old/manual geometry for automatic fitting');
-    assert(JSON.parse(localStorage.getItem(key)).models.sizeMode === 'auto', 'auto intent is persisted');
+    models.task.click(); assert(models.rect.w === 700 && models.sizeMode === 'manual', 'hide/show keeps manual geometry');
+    assert(JSON.parse(localStorage.getItem(key)).models.sizeMode === 'manual', 'manual intent is persisted');
     main.task.click();
     const beforeMax = main.rect.w;
     const maximize = main.element.querySelector('[aria-label="Maximize or restore main window"]');
     maximize.click(); maximize.click(); assert(main.sizeMode === 'auto' && main.rect.w === beforeMax, 'maximize/restore preserves automatic intent');
-    engine.arrange(); assert([...engine.windows.values()].every(win => win.sizeMode === 'compact'), 'Arrange resets sizing intent');
     engine.place(engine.windows.get('tools'), { x: 60, y: 200, w: 100, h: 90 });
     const tools = engine.windows.get('tools').rect;
     assert(tools.w === 360 && tools.h === 320, 'utilities share the main floor');
-    return 'roomy opening with a shared 360x320 floor, purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation, maximize and Arrange passed';
+    engine.place(main, { x: 20, y: 20, w: 380, h: 340 });
+    assert(main.rect.w === 380 && main.rect.h === 340, 'main shrinks below the old 610x440 floor');
+    engine.place(main, { x: 20, y: 20, w: 100, h: 100 });
+    assert(main.rect.w === 360 && main.rect.h === 320, 'main floor is 360x320');
+    return 'roomy opening with a shared 360x320 floor, purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation and maximize passed';
   } finally {
     engine.destroy(); desktop.remove(); tasks.remove();
     if (saved === null) localStorage.removeItem(key); else localStorage.setItem(key, saved);

@@ -92,7 +92,6 @@ test('feature controller preserves drafts, targets selected agents, protects cre
     hide(id) { map.get(id).hidden = true; notify(); },
     toggle(id) { map.get(id).hidden = !map.get(id).hidden; notify(); },
     focus(win) { for (const value of map.values()) value.focused = value === win; notify(); },
-    arrange() {},
     onChange(callback) { listeners.add(callback); return () => listeners.delete(callback); },
   };
   const main = { id: 'main', phase: 'idle', connected: true, sessionId: 'session', model: { provider: 'p', id: 'one' }, models: [{ provider: 'p', id: 'one' }, { provider: 'p', id: 'two' }], levels: ['off', 'high'], thinking: 'off' };
@@ -180,7 +179,8 @@ test('feature menu, appearance window and window settings exist in the shell', a
   assert.match(html, /id="settings-dialog"/);
   assert.match(html, /id="settings-list"/);
   assert.match(html, /data-testid not needed|/);
-  assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
+  assert.match(html, /id="widgets" aria-haspopup="dialog"/); assert.match(html, /id="tasks"/);
+  assert.match(html, /href="\/widgets.css"/); assert.doesNotMatch(html, /id="arrange"|class="clock-widget"|id="usage-diagram"/);
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
   assert.doesNotMatch(html, /id="background"/);
   assert.match(html, /id="particles"/);
@@ -387,7 +387,6 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
           hide(id) { const win = map.get(id); if (win) { win.hidden = true; win.body.hidden = true; notify(); } },
           toggle(id) { map.get(id).hidden ? this.show(id) : this.hide(id); },
           focus(win) { for (const item of map.values()) item.focused = win === item; notify(); },
-          arrange() { this.arranged = true; notify(); },
           onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
         };
         const main = { id: 'main', kind: 'main', name: 'Main', connected: true, phase: 'idle', sessionId: 's1', model: { provider: 'p', id: 'one' }, models: [{ provider: 'p', id: 'one' }, { provider: 'p', id: 'two' }], levels: ['off', 'high'], thinking: 'off', stats: { tokens: { input: 5, total: 10 }, cost: null }, activity: [], queue: { steering: [], followUp: [] }, availableTools: [{ name: 'read', description: '<img src=x>Read files' }, { name: 'ls', description: 'List files' }], activeTools: ['read'] };
@@ -511,8 +510,8 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
         toolsWindow.task.click(); check(!toolsWindow.element.hidden, 'taskbar still restores Tools');
         toolsWindow.element.querySelector('[aria-label="Close utility window"]').click();
         check(toolsWindow.element.hidden, 'normal utility close retained');
-        engine.show('tools'); engine.arrange();
-        check(!toolsWindow.element.hidden && tasks.children.length === 9, 'Arrange and nine feature tasks retained');
+        engine.show('tools');
+        check(!toolsWindow.element.hidden && tasks.children.length === 9, 'window control and nine feature tasks retained');
         legacyFeatures.dispose(); desktop.remove(); tasks.remove(); localStorage.removeItem('pi-desktop:layout:v1');
 
         return checks;

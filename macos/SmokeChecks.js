@@ -29,7 +29,7 @@ async function piDitherSmoke(stage) {
       check(localStorage.getItem('pi-dither:smoke-keep') === 'retained' && sessionStorage.getItem('pi-dither:smoke-keep') === 'retained', 'unrelated storage retained');
       check(!sessionStorage.getItem('pi-desktop:delegated-closed:v1:fixture') && $('[data-window-id="models"]').hidden, 'old observer dismissal and visibility cleared');
     }
-    check($('#usage-diagram').dataset.agentId === 'main' && $('#clock').textContent.length > 0, 'usage and clock widgets');
+    check($('[data-testid="widget-usage"] .widget-body').dataset.agentId === 'main' && $('[data-testid="widget-clock"] #clock').textContent.length > 0, 'usage and clock widgets');
     check($('.main-window select.model-select').nextElementSibling?.getAttribute('role') === 'combobox', 'retro select enhancement');
     const select = $('.main-window select.delivery'), trigger = select.nextElementSibling;
     trigger.click(); check(trigger.getAttribute('aria-expanded') === 'true', 'themed dropdown opens');

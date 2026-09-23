@@ -1,0 +1,28 @@
+#widget-layer{position:fixed;right:25px;top:66px;width:258px;z-index:1;pointer-events:none}
+.widget{position:absolute;pointer-events:auto;background:var(--pink);border:1px solid var(--ink);padding:3px;box-shadow:3px 3px #20201f66;overflow:hidden}
+.widget-titlebar{display:flex;align-items:center;justify-content:space-between;gap:6px;background:var(--ink);color:var(--pink);padding:2px 5px;font-size:22px;line-height:1.1;cursor:grab;touch-action:none;user-select:none}
+.widget-titlebar:active{cursor:grabbing}
+.widget-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.widget-grip{font-size:16px;opacity:.7}
+.widget-body{overflow:hidden}
+.widget-clock #date{padding:7px 6px 0;font-size:19px}
+.clock-line{display:flex;justify-content:space-between;align-items:center;padding:5px 7px 8px}
+#clock{font-size:32px}
+.clock-mark{font-size:24px}
+#widget-manager .widget-manager-list{display:flex;flex-direction:column;gap:7px;margin:12px 0 18px}
+.widget-manager-row{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #8a8a86;background:var(--paper);padding:5px 7px}
+.widget-manager-row label{display:flex;align-items:center;gap:6px;font-size:19px}
+.widget-manager-row select{font-size:17px}
+#widget-manager form{display:flex;justify-content:space-between;gap:8px;text-align:right}
+/* Model & reasoning widget: the same compact rail styling as clock/usage. */
+.widget-model .widget-body{overflow:auto}
+.widget-model-panel{display:flex;flex-direction:column;gap:4px;padding:5px 6px 6px;font-size:15px;min-height:0}
+.widget-model-panel .widget-field{display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:5px;min-width:0}
+.widget-model-panel .widget-field span{font-size:13px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.widget-model-panel select,.widget-model-panel .pi-combobox{font-size:15px;min-width:0;width:100%}
+.widget-model-actions{display:flex;gap:5px;margin-top:2px}
+.widget-model-panel button{font-size:14px;min-height:22px;padding:1px 7px;white-space:nowrap}
+.widget-model-current,.widget-model-status{margin:0;font-size:12px;line-height:1.15;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.widget-model-status{color:#595957}
+.widget-model-status.feature-error{color:#852332}
+@media(max-width:760px){#widget-layer{position:relative;inset:auto;width:calc(100% - 20px);margin:15px 10px;display:flex;flex-direction:column;gap:12px;z-index:auto;pointer-events:auto}.widget{position:relative!important;left:auto!important;top:auto!important;width:100%!important;height:auto!important;box-shadow:none}.widget-titlebar{cursor:default}}
