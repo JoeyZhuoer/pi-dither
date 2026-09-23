@@ -79,14 +79,14 @@ function createAgentPanel(id, name, kind = 'subagent', preferredSlot) {
     win.body.classList.add('has-inspection');
     win.body.insertBefore(inspection.element, $('.conversation', win.body));
   }
-  const panel = { id, kind, win, inspection, messages: new Map(), pending: false, revision: -1 };
+  const panel = { id, kind, win, inspection, messages: new Map(), pending: false, revision: -1, search: null };
   panels.set(id, panel);
   reconcileDraftSlots();
   const toolsButton = meta('Tools', 'button', 'tool-settings'); toolsButton.type = 'button';
   toolsButton.setAttribute('aria-label', `Select tools for ${kind === 'main' ? 'main agent' : win.title}`);
   toolsButton.addEventListener('click', () => features?.open('tools', id)); $('.agent-meta', win.body).append(toolsButton);
   const conversation = $('.conversation', win.body);
-  if (kind === 'main') conversation.append(emptyMain());
+  if (kind === 'main') { conversation.append(emptyMain()); panel.search = installConversationSearch(panel, conversation); }
   else {
     const transfer = meta('↖ Insert latest result into main draft', 'button', 'child-transfer');
     transfer.addEventListener('click', () => {
@@ -170,6 +170,99 @@ function updateSelect(select, choices, value) {
   if (value != null) select.value = value;
   syncCombobox(select);
 }
+// In-window conversation search for the main agent. Matches are wrapped in
+// <mark> elements inside the existing message nodes, so a streaming update that
+// replaces one node re-highlights the same map without a full re-render.
+function searchTextNodes(root) {
+  const nodes = [], walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node; while ((node = walker.nextNode())) nodes.push(node);
+  return nodes;
+}
+function clearSearchMarks(panel) {
+  for (const { node } of panel.messages.values()) {
+    const marks = node.querySelectorAll('mark.search-hit');
+    if (!marks.length) continue;
+    for (const mark of marks) mark.replaceWith(document.createTextNode(mark.textContent));
+    node.normalize();
+  }
+}
+function recomputeSearch(search) {
+  clearSearchMarks(search.panel);
+  const query = search.input.value.trim().toLowerCase();
+  search.query = query; search.hits = [];
+  if (!query) return;
+  for (const { node } of search.panel.messages.values()) {
+    for (const text of searchTextNodes(node)) {
+      const haystack = text.nodeValue.toLowerCase(), starts = [];
+      let from = 0, at;
+      while ((at = haystack.indexOf(query, from)) !== -1) { starts.push(at); from = at + query.length; }
+      const segment = [];
+      // Wrap each text node from its last match backwards so earlier offsets stay valid.
+      for (let index = starts.length - 1; index >= 0; index--) {
+        const range = document.createRange();
+        range.setStart(text, starts[index]); range.setEnd(text, starts[index] + query.length);
+        const mark = document.createElement('mark'); mark.className = 'search-hit';
+        range.surroundContents(mark); segment.push(mark);
+      }
+      for (let index = segment.length - 1; index >= 0; index--) search.hits.push(segment[index]);
+    }
+  }
+}
+function updateSearchCount(search) {
+  const total = search.hits.length;
+  search.count.textContent = total ? `${search.current + 1}/${total}` : '0/0';
+}
+function revealSearchHit(search, scroll = true) {
+  for (const [index, mark] of search.hits.entries()) mark.classList.toggle('current', index === search.current);
+  const mark = search.hits[search.current];
+  if (!mark) return;
+  const details = mark.closest('details'); if (details) details.open = true;
+  if (scroll) mark.scrollIntoView({ block: 'center' });
+}
+function stepSearch(search, delta) {
+  if (!search.hits.length) return;
+  search.current = (search.current + delta + search.hits.length) % search.hits.length;
+  revealSearchHit(search); updateSearchCount(search);
+}
+function openSearch(search) { search.bar.hidden = false; search.input.focus(); search.input.select(); }
+function closeSearch(search) {
+  search.bar.hidden = true; search.input.value = ''; recomputeSearch(search);
+  search.current = -1; updateSearchCount(search);
+}
+function installConversationSearch(panel, conversation) {
+  const bar = document.createElement('div');
+  bar.className = 'conversation-search'; bar.setAttribute('role', 'search'); bar.hidden = true;
+  bar.innerHTML = '<input type="search" class="search-input" placeholder="Search history" aria-label="Search conversation history"><span class="search-count" role="status" aria-live="polite">0/0</span><button type="button" class="search-prev" aria-label="Previous match" title="Previous match (Shift+Enter)">↑</button><button type="button" class="search-next" aria-label="Next match" title="Next match (Enter)">↓</button><button type="button" class="search-close" aria-label="Close search" title="Close search (Esc)">×</button>';
+  conversation.before(bar);
+  const search = { bar, input: $('.search-input', bar), count: $('.search-count', bar), panel, query: '', hits: [], current: -1, frame: 0 };
+  search.input.addEventListener('input', () => { recomputeSearch(search); search.current = search.hits.length ? 0 : -1; revealSearchHit(search); updateSearchCount(search); });
+  search.input.addEventListener('keydown', (event) => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') { event.preventDefault(); stepSearch(search, event.shiftKey ? -1 : 1); }
+    else if (event.key === 'Escape') { event.preventDefault(); closeSearch(search); }
+  });
+  $('.search-prev', bar).addEventListener('click', () => stepSearch(search, -1));
+  $('.search-next', bar).addEventListener('click', () => stepSearch(search, 1));
+  $('.search-close', bar).addEventListener('click', () => closeSearch(search));
+  // Streaming replaces individual message nodes; coalesce the re-highlight to one
+  // frame instead of running on every delta.
+  search.refresh = () => {
+    if (!search.query) return;
+    cancelAnimationFrame(search.frame);
+    search.frame = requestAnimationFrame(() => {
+      const index = search.current;
+      recomputeSearch(search);
+      search.current = search.hits.length ? Math.min(index < 0 ? 0 : index, search.hits.length - 1) : -1;
+      revealSearchHit(search, false); updateSearchCount(search);
+    });
+  };
+  return search;
+}
+function toggleSearch(search) { if (search.bar.hidden) openSearch(search); else closeSearch(search); }
+function isTypingTarget(element) {
+  if (!element) return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable;
+}
 function messageNode(message) {
   if (message.role === 'tool') {
     const node = document.createElement('details'); node.className = `message tool-message ${message.status}`;
@@ -226,9 +319,6 @@ function renderAgent(state) {
   if (panel.revision !== state.revision) {
     const container = $('.conversation', body);
     const stick = container.scrollHeight - container.scrollTop - container.clientHeight < 70;
-    const historyNotice = container.querySelector('.history-notice');
-    if (state.trimmed && !historyNotice) container.prepend(meta('Older entries are omitted here.', 'p', 'history-notice stream-hint'));
-    if (!state.trimmed) historyNotice?.remove();
     const messages = state.messages.filter((m) => m.role !== 'assistant' || m.text || m.thinking || m.status === 'streaming');
     if (messages.length) container.querySelector('.empty-state')?.remove();
     const kept = new Set();
@@ -248,6 +338,7 @@ function renderAgent(state) {
     if (!messages.length && panel.kind === 'main' && !container.querySelector('.empty-state')) container.append(emptyMain());
     if (stick) container.scrollTop = container.scrollHeight;
     panel.revision = state.revision;
+    panel.search?.refresh();
   }
   const badges = $('.tool-badges', body);
   if (badges) badges.replaceChildren(...(!Array.isArray(state.activeTools) ? [meta('Tool state unavailable')] : state.activeTools.length ? state.activeTools.map((name) => meta(`+ ${name}`)) : [meta('No tools enabled')]));
@@ -445,6 +536,16 @@ saveTaskbarChoices();
 $('#settings').addEventListener('click', () => { closeMenu(); $('#settings-dialog').showModal(); });
 document.addEventListener('pointerdown', (event) => { if (!menu.contains(event.target) && !menuButton.contains(event.target)) closeMenu(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !menu.hidden) { closeMenu(); menuButton.focus(); } });
+// Cmd/Ctrl+F opens (or closes) the main window's history search. It stays out of the
+// way of form fields so the composer keeps Cmd/Ctrl+Enter to send; the search field
+// itself is the one exception, so the same shortcut can dismiss it.
+document.addEventListener('keydown', (event) => {
+  if (event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f') return;
+  const search = panels.get('main')?.search;
+  if (!search || search.panel.win.element.hidden) return;
+  if (isTypingTarget(document.activeElement) && document.activeElement !== search.input) return;
+  event.preventDefault(); toggleSearch(search);
+});
 windows.onChange((list) => {
   updateUsageDiagram();
   for (const button of menu.querySelectorAll('[data-feature]')) button.setAttribute('aria-pressed', String(list.some((win) => win.id === button.dataset.feature && !win.hidden)));

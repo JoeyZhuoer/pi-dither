@@ -21,13 +21,13 @@ const profiles = {
 };
 const profileFor = (kind, id) => kind === 'delegated' ? [560, 430]
   : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660]) : null;
-// Minimum usable width/height per kind, shared by opening geometry and
-// viewport clamping so they cannot drift apart. Main can be dragged down to a
-// narrow column; children alone keep the main-relative cap.
-const minimum = (kind) => kind === 'main' ? { w: 360, h: 320 }
-  : kind === 'subagent' ? { w: 270, h: 250 } : { w: 400, h: 320 };
-// Opening stays roomier than the floor so shrinking is always the user's choice.
-const openingWidth = (kind) => kind === 'main' ? 610 : minimum(kind).w;
+// Minimum usable width/height, shared by opening geometry and viewport
+// clamping so they cannot drift apart. Every kind can be dragged down to the
+// same narrow column as main; children alone keep the main-relative cap.
+const minimum = () => ({ w: 360, h: 320 });
+// Opening stays roomier than the floor so shrinking is always the user's
+// choice: main 610, manual children at the floor, observers/utilities 400.
+const openingWidth = (kind) => kind === 'main' ? 610 : kind === 'subagent' ? 360 : 400;
 // Opening height as a fraction of the desktop; medium, not the full canvas.
 const MEDIUM_HEIGHT = .6;
 
@@ -99,7 +99,8 @@ export class DesktopWindows {
     const h = mobile ? Math.max(800, this.desktop.clientHeight) : this.desktop.clientHeight;
     if (kind === 'main') return { x: Math.max(15, w * .055), y: 34, w: Math.min(1000, w * .66), h: Math.min(780, h - 74) };
     if (kind === 'utility') return { x: 70 + (index % 4) * 28, y: 45 + (index % 4) * 28, w: Math.min(820, w * .7), h: Math.min(660, h - 70) };
-    return { x: w - 350 - (index % 2) * 35, y: 105 + (index % 3) * 240, w: 325, h: 310 };
+    // Right-edge anchor kept at desktop width - 25 while the preset grew to the floor.
+    return { x: w - 385 - (index % 2) * 35, y: 105 + (index % 3) * 240, w: 360, h: 320 };
   }
   defaultRect(kind, index = 0, id) {
     const profile = profileFor(kind, id);
@@ -290,7 +291,7 @@ export class DesktopWindows {
   }
   workingRect(win) {
     const w = this.desktop.clientWidth, h = this.desktop.clientHeight;
-    const limits = minimum(win.kind);
+    const limits = minimum();
     // Open at the minimum usable width with a medium height. Manual resizing
     // replaces these values for that window and keeps them (sizeMode manual).
     const target = { w: Math.min(openingWidth(win.kind), Math.max(1, w - 8)), h: Math.max(limits.h, Math.round(h * MEDIUM_HEIGHT)) };
@@ -325,7 +326,7 @@ export class DesktopWindows {
     const maxW = small ? Math.max(1, Math.min(460, (main?.rect.w ?? 800) - 140, areaW - 8)) : areaW - 8;
     const maxH = small ? Math.max(1, Math.min(510, (main?.rect.h ?? 680) - 100, areaH - 8)) : areaH - 8;
     const defaults = this.defaultRect(win.kind, win.index, win.id);
-    const limits = minimum(win.kind);
+    const limits = minimum();
     const rect = Object.fromEntries(rectKeys.map((key) => [key, Number.isFinite(requested?.[key]) ? requested[key] : defaults[key]]));
     const w = clamp(rect.w, Math.min(limits.w, maxW), maxW);
     const h = clamp(rect.h, Math.min(limits.h, maxH), maxH);

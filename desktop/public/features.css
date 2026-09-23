@@ -18,6 +18,9 @@
 .feature-window .feature-status{min-height:1.25em;font-size:17px;margin:0 0 8px}
 .feature-window .feature-error{color:#852332;background:#efc8d1;border:1px solid #9e344d;padding:6px}
 .feature-window .feature-empty,.feature-window .feature-connection{color:var(--muted,#595957);font-size:17px}
+/* Empty shell rows collapse so a panel's content starts directly under its title bar.
+   Panels that do fill their toolbar/status/connection (Models, Providers, Workspace) keep their rhythm. */
+.feature-window .feature-toolbar:empty,.feature-window .feature-status:empty,.feature-window .feature-connection:empty{display:none}
 .feature-window pre{font:12px/1.5 var(--code,monospace);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:320px;background:var(--paper,#f5f5f1);padding:8px;border:1px solid #aaa;min-width:0}
 .feature-window pre.feature-diff{white-space:pre;overflow-wrap:normal;min-height:40px}
 .feature-window .feature-stats{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:3px 12px;margin:0}

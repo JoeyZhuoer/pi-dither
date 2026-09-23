@@ -95,6 +95,8 @@ test('compact presets stay purpose-specific while windows open at minimum width 
   const main = addMain(manager);
   const child = manager.add({ id: 'child', title: 'Child', kind: 'subagent' });
   const delegate = manager.add({ id: 'opaque-run-child', title: 'Observer', kind: 'delegated' });
+  // Manual children open at the shared floor width instead of the old 270px.
+  assert.equal(child.rect.w, 360, 'manual children open at the floor width');
   const ids = ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background'];
   const compact = new Set(), opened = new Set();
   for (const id of ids) {
@@ -336,6 +338,39 @@ test('main shrinks to a narrow column while opening stays roomy', (t) => {
   const copy = restored.add({ id: 'main', title: 'Main', kind: 'main' });
   assert.deepEqual(copy.rect, { x: 30, y: 40, w: 360, h: 320 }); assert.equal(copy.sizeMode, 'manual');
   restored.destroy();
+});
+
+test('every window kind shares the main 360x320 floor while opening widths stay purpose-specific', (t) => {
+  const { manager } = fixture(t);
+  const main = addMain(manager);
+  const child = manager.add({ id: 'child', title: 'Child', kind: 'subagent' });
+  const observer = manager.add({ id: 'observer', title: 'Observer', kind: 'delegated' });
+  const utility = addUtility(manager); manager.show('models');
+  assert.deepEqual({ w: main.rect.w, h: main.rect.h }, { w: 610, h: 540 }, 'main opens at its roomy preset');
+  assert.equal(child.rect.w, 360, 'manual children open at the floor width');
+  assert.equal(observer.rect.w, 400, 'observers open roomier than the floor');
+  assert.equal(utility.rect.w, 400, 'utilities open roomier than the floor');
+  // Below-floor placement clamps every kind to the same column while main stays roomy.
+  for (const win of [child, observer, utility]) {
+    manager.place(win, { x: 10, y: 10, w: 100, h: 100 });
+    assert.deepEqual({ w: win.rect.w, h: win.rect.h }, { w: 360, h: 320 }, win.kind + ' floor');
+  }
+  manager.place(main, { x: 10, y: 10, w: 100, h: 100 });
+  assert.deepEqual({ w: main.rect.w, h: main.rect.h }, { w: 360, h: 320 }, 'main floor');
+});
+
+test('legacy saved layouts below the new floor clamp up to it', (t) => {
+  const { manager } = fixture(t, JSON.stringify({
+    child: { x: 900, y: 120, w: 270, h: 250 },
+    models: { x: 70, y: 45, w: 330, h: 300, hidden: false },
+  }));
+  addMain(manager);
+  const child = manager.add({ id: 'child', title: 'Child', kind: 'subagent' });
+  const utility = addUtility(manager);
+  assert.deepEqual(child.rect, { x: 900, y: 120, w: 360, h: 320 }, 'the old child minimum clamps up to the shared floor');
+  assert.deepEqual(utility.rect, { x: 70, y: 45, w: 360, h: 320 }, 'an old utility minimum clamps up to the shared floor');
+  manager.show('models');
+  assert.deepEqual(utility.rect, { x: 70, y: 45, w: 360, h: 320 }, 'the clamped legacy rectangle keeps its manual intent on selection');
 });
 
 test('maximized auto-sized windows retain restore intent across reload', (t) => {

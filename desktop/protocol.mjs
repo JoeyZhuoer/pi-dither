@@ -33,7 +33,7 @@ export function createAgentState(id, name, kind) {
   return {
     id, name, kind, phase: 'starting', connected: false, model: null, thinking: 'off',
     models: [], levels: ['off'], messages: [], queue: { steering: [], followUp: [] },
-    inspection: emptyInspection('user', 'session'), stats: null, error: null, notice: '', sessionId: null, revision: 0, trimmed: false,
+    inspection: emptyInspection('user', 'session'), stats: null, error: null, notice: '', sessionId: null, revision: 0,
     sessionName: name, cwd: '', startedAt: Date.now(), lastActivityAt: null,
     currentTool: null, activity: [], activityMode: 'idle', currentUsage: null, availableTools: null, activeTools: null, extensionStatus: null,
     ...(kind === 'main' ? { delegations: [], delegationStatus: { available: false, message: 'Discovering delegation telemetry.', omitted: 0 } } : {}),
@@ -83,7 +83,7 @@ export class AgentReducer {
     this.state.messages = []; this.state.queue = { steering: [], followUp: [] };
     this.state.error = null; this.state.notice = ''; this.state.stats = null;
     this.state.phase = 'idle'; this.state.activityMode = 'idle'; this.assistant = null; this.blocks = [];
-    this.state.trimmed = false; this.state.currentTool = null; this.state.currentUsage = null;
+    this.state.currentTool = null; this.state.currentUsage = null;
     this.state.activity = []; this.state.lastActivityAt = null; this.state.revision++;
   }
   hydrate(messages) {
@@ -205,12 +205,8 @@ export class AgentReducer {
       case 'extension_error': state.error = clip(event.error); break;
       default: return false;
     }
-    let bytes = state.messages.reduce((total, message) => total + (message.text?.length ?? 0) + (message.thinking?.length ?? 0), 0);
-    while (state.messages.length > 160 || (bytes > 1_000_000 && state.messages.length > 1)) {
-      const removed = state.messages.shift();
-      bytes -= (removed.text?.length ?? 0) + (removed.thinking?.length ?? 0);
-      state.trimmed = true;
-    }
+    // The full session transcript is kept: hydrate and append both retain every
+    // message Pi delivers. Only per-message text is clipped (see `clip`).
     state.revision++;
     return true;
   }

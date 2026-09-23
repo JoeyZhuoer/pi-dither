@@ -37,6 +37,24 @@ test('tool partial results replace cumulative output; agent_end is not settled',
   reducer.apply({ type: 'agent_settled' }); assert.equal(state.phase, 'idle');
 });
 
+test('hydrate and append retain the complete session history without projection trim', () => {
+  const state = createAgentState('main', 'Main', 'main'), reducer = new AgentReducer(state);
+  const history = Array.from({ length: 400 }, (_, index) => ({ role: 'user', content: `entry ${index}`, timestamp: index }));
+  reducer.hydrate(history);
+  assert.equal(state.messages.length, 400, 'hydrate keeps every message past the old 160-entry cap');
+  assert.equal(state.messages[0].text, 'entry 0');
+  assert.equal(state.messages.at(-1).text, 'entry 399');
+  for (let index = 0; index < 50; index++) reducer.apply({ type: 'message_start', message: { role: 'user', content: `extra ${index}` } });
+  assert.equal(state.messages.length, 450, 'append keeps growing instead of dropping the oldest entries');
+  assert.equal(state.messages[0].text, 'entry 0', 'the oldest entry survives later appends');
+  // The old reducer also trimmed once displayed text passed roughly one million
+  // characters. Every message here clips to 64,000, so twenty exceed the byte cap.
+  const long = 'x'.repeat(120_000);
+  reducer.hydrate(Array.from({ length: 20 }, (_, index) => ({ role: 'user', content: `long ${index}:${long}` })));
+  assert.equal(state.messages.length, 20, 'a transcript above one million characters is not trimmed');
+  assert.equal(state.messages[0].text.startsWith('long 0:'), true);
+});
+
 test('serialized model strips provider configuration and credentials', () => {
   const model = safeModel({ id: 'local', provider: 'test', apiKey: 'secret', headers: { Authorization: 'secret' }, baseUrl: 'private' });
   assert.ok(!JSON.stringify(model).includes('secret'));

@@ -50,7 +50,7 @@ export const MOTION_SETTLE = .05;
 export const MOTION_AXES = { right: ['x', 1], front: ['y', 1] };
 
 // Contract C1 status values only: a host must not be able to inject arbitrary
-// text (or claim 'available' by leaving the field out) into the status line.
+// text (or claim 'available' by leaving the field out) into the status value.
 export function motionStatus(value) {
   const text = String(value ?? '').trim().toLowerCase();
   return text === 'available' || text === 'denied' ? text : 'unavailable';

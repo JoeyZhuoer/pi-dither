@@ -214,12 +214,13 @@ async function piDitherSmoke(stage) {
       check(typeof motionHost.subscribe(() => {}) === 'function', 'subscribe still returns an unsubscribe function without a sensor');
     }
     const motionStatusNode = $('[data-testid="background-motion-status"]');
-    check(!!motionStatusNode && /MOTION \//.test(motionStatusNode.textContent), 'the Appearance window reports the motion status in words (' + (motionStatusNode ? motionStatusNode.textContent.trim() : 'missing') + ')');
+    check(!motionStatusNode, 'the Appearance window no longer shows a motion status line');
     // Real deliveries would interleave with the synthetic stream and blur the
     // physics checks; pause the native feed (deliver() from this script still works).
     if (typeof motionHost.pause === 'function') motionHost.pause();
     const motionSelect = $('[data-testid="background-motion"]');
     check(!!motionSelect, 'the Appearance window exposes the Motion control');
+    check(!!$('[data-testid="background-motion-rezero"]'), 'the Appearance window exposes the Re-zero motion button');
     // Deliver like a real sensor would (about 60 samples a second) so the gravity
     // filter actually converges: one sample only moves it a fraction of the way.
     const streamMotion = async (sample, count = 30) => {
@@ -330,11 +331,14 @@ async function piDitherSmoke(stage) {
     maximize.click(); maximize.click(); check(saved().main.sizeMode === 'auto', 'maximize/restore retains auto intent');
     main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     check(saved().main.sizeMode === 'manual', 'manual resize opts out');
-    // The narrower floor lets the user shrink main well below the old 610px.
+    // The shared narrower floor lets the user shrink main well below the old 610px.
     for (let i = 0; i < 20; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     const narrowMain = parseFloat(main.style.width);
     check(narrowMain <= 410 && narrowMain >= 360, `main shrinks below the old floor (${narrowMain}px)`);
     check(main.querySelector('.send').getBoundingClientRect().bottom <= main.getBoundingClientRect().bottom + 1, 'narrow main keeps its composer reachable');
+    // Every kind now shares main's floor, so ten more lefts stop at 360px.
+    for (let i = 0; i < 10; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    check(parseFloat(main.style.width) === 360, `main stops at the shared 360px floor (${main.style.width})`);
     nativeFeatureState.manual = saved().main.w;
   } else if (stage === 'manual-narrow') {
     await wait(() => innerWidth < 1000);

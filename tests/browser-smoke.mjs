@@ -268,12 +268,8 @@ try {
     // leans the whole cloud, re-zero levels it again and off lets it settle home.
     assert.equal(await evaluate('(() => { const s = document.querySelector(\'[data-testid="background-motion"]\'); return s ? s.value : null; })()'), 'off', 'motion is off by default');
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:motion:v1")'), null);
-    const motionStatus = `(() => { const s = document.querySelector('[data-testid="background-motion-status"]'); return s ? s.textContent : null; })()`;
-    // Honesty check: with no host and no samples the line may name the provider the
-    // browser offers, but it must never claim a measured rate.
-    const idleMotion = await evaluate(motionStatus);
-    assert.match(idleMotion, /WAITING|NO SENSOR/, `the status line waits for real samples (${idleMotion})`);
-    assert.doesNotMatch(idleMotion, /HZ/, 'and never invents a rate');
+    // The Appearance window no longer shows a motion status line.
+    assert.ok(await evaluate(`!document.querySelector('[data-testid="background-motion-status"]')`), 'the motion status line is gone');
     assert.equal(await evaluate('(() => { const b = document.querySelector(\'[data-testid="background-motion-rezero"]\'); return b ? b.disabled : null; })()'), true, 're-zero is unavailable with motion off');
     await evaluate(`window.__piDitherMotionHost = {
       version: 1, status: 'available', latest: null, peak: 0, subscribers: new Set(),
@@ -295,9 +291,6 @@ try {
     await until(`Math.abs((${cloudStats}).cx - ${motionHome.cx}) > 5`);
     const leaned = await evaluate(cloudStats);
     assert.ok(Math.abs(leaned.cx - motionHome.cx) > 5, `a tilt leans the whole cloud (${(leaned.cx - motionHome.cx).toFixed(1)} px)`);
-    assert.match(await evaluate(motionStatus), /LAPTOP SENSOR/, 'the status line names the real provider');
-    await until(`${motionStatus}.match(/HZ/)`);
-    assert.match(await evaluate(motionStatus), /HZ/, 'and reports the measured sample rate');
     // Shake: a burst must move points outward and then settle again.
     await evaluate(`(() => { for (let index = 0; index < 40; index++) window.__piDitherMotionHost.deliver({ x: -0.342, y: 0, z: 1.6, at: performance.now() + index * 16, peak: 1.2 }); })()`);
     // The burst happens over the next few frames, so let the loop run before looking.
@@ -321,7 +314,6 @@ try {
     assert.ok(Math.abs(rested.cx - motionHome.cx) < .5 && Math.abs(rested.cy - motionHome.cy) < .5, `with motion off the cloud is back on its home centre (${(rested.cx - motionHome.cx).toFixed(2)}, ${(rested.cy - motionHome.cy).toFixed(2)} px)`);
     assert.ok(Math.abs(rested.inked - motionHome.inked) <= Math.max(200, motionHome.inked * .01), `and its pixel count is back within rounding (${motionHome.inked} -> ${rested.inked})`);
     assert.ok(sameRegion(await evaluate(farStats), motionFar), 'the far box is where it was before motion');
-    assert.match(await evaluate(motionStatus), /OFF/, 'and the status line says so');
 
     // Extra drifting field on top of the cloud.
     const cloudOnly = (await evaluate(cloudStats)).inked;
@@ -499,6 +491,18 @@ try {
   }
   const utilitySizes = await evaluate('Array.from(document.querySelectorAll(".utility-window"), e => e.style.width + "/" + e.style.height)');
   assert.ok(utilitySizes.every(size => size.startsWith('400px/')), 'every utility opens at the minimum width with a medium height: ' + JSON.stringify(utilitySizes));
+  // Regression: Tools fills none of the shell's top rows, so the empty toolbar/status/connection must
+  // collapse instead of leaving a blank strip between the title bar and the form. Models keeps its toolbar.
+  await evaluate(`document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="tools"]').click()`);
+  await until(`document.querySelector('[data-window-id="tools"]').hidden === false`);
+  for (const row of ['feature-toolbar', 'feature-status', 'feature-connection']) {
+    assert.equal(await evaluate(`getComputedStyle(document.querySelector('[data-window-id="tools"] .feature-window > .${row}')).display`), 'none', `empty Tools ${row} collapses`);
+  }
+  const toolsFormTop = await evaluate(`(() => { const panel = document.querySelector('[data-window-id="tools"] .feature-window'); return Math.round(panel.querySelector('.feature-tools-form').getBoundingClientRect().top - panel.getBoundingClientRect().top); })()`);
+  assert.ok(toolsFormTop >= 0 && toolsFormTop < 12, 'Tools form sits directly under the title bar: ' + toolsFormTop);
+  await evaluate(`document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="providers"]').click()`);
+  await until(`document.querySelector('[data-window-id="providers"]').hidden === false`);
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('[data-window-id="providers"] .feature-window > .feature-toolbar')).display`), 'flex', 'Providers keeps its populated toolbar');
   if (app) {
     assert.equal(await evaluate('document.querySelector("[data-testid=tools-tool-subagent]").checked'), true, 'extension tool is visible and initially active for main');
     assert.match(await evaluate('document.querySelector("[data-testid=tools-extension]").textContent'), /pi-subagents/);
@@ -544,6 +548,31 @@ try {
     assert.ok(await evaluate(`[...document.querySelectorAll('.main-window .conversation .thinking-content')].at(-1).textContent.includes(${JSON.stringify(firstSample)})`), 'the newest reasoning text sits inside the block and is the fixture text');
     assert.ok(await evaluate('[...document.querySelectorAll(".main-window .conversation details")].at(-1).closest(".message") !== null'), 'the block belongs to the message it came from');
     assert.ok(await evaluate('[...document.querySelectorAll(".main-window .conversation .message-body")].at(-1).textContent.includes("Review result")'), 'the answer still renders below the block');
+    // Main-window history search (Cmd/Ctrl+F): live matching across answer and
+    // reasoning text with a counter, next/previous and Escape to clear.
+    await evaluate('document.activeElement instanceof HTMLElement && document.activeElement.blur()');
+    await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true, cancelable: true }))`);
+    await until('document.querySelector(".main-window .conversation-search")?.hidden === false');
+    assert.equal(await evaluate('document.activeElement === document.querySelector(".main-window .search-input")'), true, 'Cmd/Ctrl+F focuses the search field');
+    await evaluate(`{ const input = document.querySelector('.main-window .search-input'); input.value = 'fixture'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
+    assert.ok(await evaluate('document.querySelector(".main-window .thinking-content mark.search-hit") !== null'), 'reasoning text is searchable');
+    await evaluate(`{ const input = document.querySelector('.main-window .search-input'); input.value = 'Review result'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
+    assert.ok(await evaluate('document.querySelector(".main-window .message-body mark.search-hit") !== null'), 'answer text is searchable');
+    await evaluate(`{ const input = document.querySelector('.main-window .search-input'); input.value = 'ing'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
+    const searchFirst = await evaluate('document.querySelector(".main-window .search-count").textContent');
+    assert.match(searchFirst, /^1\/\d+$/, 'the counter shows the active match');
+    assert.ok(Number(searchFirst.split('/')[1]) >= 2, 'the query has several matches to step through');
+    await evaluate(`document.querySelector('.main-window .search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`);
+    assert.match(await evaluate('document.querySelector(".main-window .search-count").textContent'), /^2\//, 'Enter advances to the next match');
+    await evaluate(`document.querySelector('.main-window .search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true }))`);
+    assert.match(await evaluate('document.querySelector(".main-window .search-count").textContent'), /^1\//, 'Shift + Enter steps back');
+    // The composer keeps its own shortcuts: Cmd/Ctrl+F is not intercepted from the textarea.
+    await evaluate('document.querySelector(".main-window textarea").focus()');
+    const searchGuard = await evaluate(`(() => { const field = document.querySelector('.main-window textarea'); const event = new KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true, cancelable: true }); field.dispatchEvent(event); return event.defaultPrevented; })()`);
+    assert.equal(searchGuard, false, 'Cmd/Ctrl+F is ignored while the composer has focus');
+    await evaluate(`document.querySelector('.main-window .search-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`);
+    assert.equal(await evaluate('document.querySelector(".main-window .conversation-search").hidden'), true, 'Escape closes and clears the search');
+    assert.equal(await evaluate('document.querySelectorAll(".main-window mark.search-hit").length'), 0, 'closing removes the highlights');
     // A child window renders its own reasoning in its own conversation.
     await evaluate(`document.querySelector('#add-agent').click()`);
     const draftId = await evaluate(`[...document.querySelectorAll('[data-window-id]')].map((node) => node.dataset.windowId).filter((id) => String(id).startsWith('draft-')).at(-1)`);

@@ -123,9 +123,9 @@ test('feature controller preserves drafts, targets selected agents, protects cre
     assert.equal(el('models-model').value, 'two'); assert.equal(calls.length, 0);
     el('models-apply').click(); await tick();
     assert.deepEqual(calls.at(-1), { path: '/api/agents/child/model', data: { provider: 'p', modelId: 'two' } });
-    el('models-thinking').value = 'high'; el('models-thinking-apply').click(); await tick(); el('models-refresh').click(); await tick();
+    el('models-thinking').value = 'high'; el('models-thinking-apply').click(); await tick();
+    el('models-agent').value = 'child'; el('models-agent').dispatchEvent(new Event('change'));
     assert.ok(calls.some(call => call.path === '/api/agents/child/thinking' && call.data.level === 'high'));
-    assert.ok(calls.some(call => call.path === '/api/agents/child/refresh'));
     state.agents[1].phase = 'running'; features.update(state); assert.equal(el('models-apply').disabled, true);
     state.agents[1].phase = 'idle'; features.update(state);
     features.open('providers'); await tick(); const release = hold('/api/providers/configure');
@@ -185,6 +185,36 @@ test('feature menu, appearance window and window settings exist in the shell', a
   assert.doesNotMatch(html, /id="background"/);
   assert.match(html, /id="particles"/);
   assert.match(html, /<strong>Appearance<\/strong> holds the colours, the background photo and the extra particle field/);
+});
+
+// The shell renders toolbar/connection/status rows for every feature window. Tools populates none of
+// them above its form, so those rows must collapse instead of leaving a blank strip under the title bar.
+test('feature shell collapses the empty toolbar, status and connection rows above panel content', async (t) => {
+  // The fixture below never applies a stylesheet, so pair the DOM shape with the CSS contract: an
+  // :empty shell row is display:none, and a populated toolbar keeps its rhythm.
+  const css = await readFile(new URL('../desktop/public/features.css', import.meta.url), 'utf8');
+  assert.match(css, /\.feature-window \.feature-toolbar:empty\s*,\s*\.feature-window \.feature-status:empty\s*,\s*\.feature-window \.feature-connection:empty\s*\{\s*display:\s*none/, 'empty feature-shell rows collapse');
+  const previous = globalThis.document;
+  const body = new Element('body'), map = new Map(), listeners = new Set();
+  globalThis.document = { createElement: tag => new Element(tag) };
+  const windows = {
+    windows: map,
+    add(options) { const root = new Element('section'); body.append(root); const win = { ...options, body: root }; map.set(options.id, win); return win; },
+    list() { return [...map.values()]; },
+    show(id) { map.get(id).hidden = false; },
+    focus() {},
+    onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+  };
+  const features = installFeatureWindows({ windows, api: async () => ({}), getState: () => ({ connected: true, agents: [] }) });
+  t.after(() => { features.dispose(); globalThis.document = previous; });
+  const shellRow = (id, className) => body.querySelector(`[data-testid="feature-${id}"]`).children.find(child => (child.className || '').split(' ').includes(className));
+  for (const className of ['feature-toolbar', 'feature-status', 'feature-connection']) {
+    assert.equal(shellRow('tools', className).children.length, 0, `Tools leaves its shell ${className} empty so the gap collapses`);
+    assert.equal(shellRow('tools', className).textContent, '', `Tools shell ${className} carries no text`);
+  }
+  assert.equal(body.querySelector('[data-testid="tools-apply"]').parent.children.length, 3, 'Tools keeps its in-form action row');
+  assert.ok(shellRow('providers', 'feature-toolbar').children.length > 0, 'providers keeps a populated toolbar');
+  assert.equal(shellRow('models', 'feature-toolbar').children.length, 0, 'models toolbar is empty after the refresh button removal');
 });
 
 test('Tools drafts, authoritative Apply, guards, empty catalogs and stale responses (no provider)', async (t) => {
@@ -415,8 +445,8 @@ test('feature windows: real DOM forms, contracts, guards and async races (synthe
         features.open('models'); change('models-agent', 'child'); change('models-model', 'two');
         for (let i = 0; i < 20; i++) features.update(state);
         check(el('models-model').value === 'two' && calls.length === 0, 'SSE updates preserve model draft and never refresh-storm');
-        click('models-apply'); await tick(); change('models-thinking', 'high'); click('models-thinking-apply'); await tick(); click('models-refresh'); await tick();
-        check(calls.some(call => call.path === '/api/agents/child/model' && call.body.modelId === 'two') && calls.some(call => call.path === '/api/agents/child/thinking' && call.body.level === 'high') && calls.some(call => call.path === '/api/agents/child/refresh'), 'models and reasoning target selected agent');
+        click('models-apply'); await tick(); change('models-thinking', 'high'); click('models-thinking-apply'); await tick(); change('models-agent', 'child');
+        check(calls.some(call => call.path === '/api/agents/child/model' && call.body.modelId === 'two') && calls.some(call => call.path === '/api/agents/child/thinking' && call.body.level === 'high'), 'models and reasoning target selected agent');
         state.agents[1].phase = 'running'; features.update(state);
         check(el('models-apply').disabled, 'busy agent model mutation disabled');
         state.agents[1].phase = 'idle'; features.update(state);
