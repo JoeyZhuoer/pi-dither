@@ -1,6 +1,6 @@
 import { syncCombobox } from './combobox.js';
 import { DEFAULT_GROUND, DEFAULT_THEME } from './background.js';
-import { PARTICLE_CHOICES, PHOTO_MODES, isPhotoMode } from './particles.js';
+import { CLOUD_CHOICES, PARTICLE_CHOICES } from './particles.js';
 
 const TITLES = {
   models: 'Models & reasoning', providers: 'Providers', workspace: 'Workspace',
@@ -345,13 +345,14 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   // Appearance: theme accent, ground colour and a locally stored dithered
   // photo. No requests, no timers; changes apply immediately and persist.
   const backgroundPanel = panels.get('background');
-  backgroundPanel.content.append(node('p', 'The theme colour paints the desktop chrome; the ground colour fills the desk. The photo is downscaled, stored locally and dithered into the ground colour. Nothing is uploaded. Very large photos show until the app restarts.'));
+  backgroundPanel.content.append(node('p', 'The theme colour paints the desktop chrome; the ground colour fills the desk. The photo is downscaled, stored locally and turned into the point-cloud background: move the pointer to push or pull it, and it springs back when you leave. Nothing is uploaded. Very large photos show until the app restarts.'));
   const backgroundForm = node('form', null, 'feature-form'); backgroundPanel.content.append(backgroundForm);
   const themeInput = field(backgroundForm, 'Theme colour', 'background-theme', 'color');
   const groundInput = field(backgroundForm, 'Ground colour', 'background-ground', 'color');
   const photoInput = field(backgroundForm, 'Photo', 'background-photo', 'file');
   photoInput.accept = 'image/*';
   const particleInput = field(backgroundForm, 'Particles', 'background-particles', 'select');
+  const cloudInput = field(backgroundForm, 'Cloud pointer', 'background-cloud', 'select');
   const usesBackground = () => !!background;
   const themeDefault = button('Default theme', 'background-theme-reset', () => {
     if (!background) return;
@@ -370,7 +371,7 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   });
   backgroundForm.append(themeDefault, groundDefault, photoRemove);
   for (const element of [themeInput, groundInput, photoInput, themeDefault, groundDefault, photoRemove]) guard(element, usesBackground);
-  guard(particleInput, () => !!particles);
+  guard(particleInput, () => !!particles); guard(cloudInput, () => !!particles);
   on(themeInput, 'input', () => { if (background) background.setTheme(themeInput.value); });
   on(themeInput, 'change', () => { if (background) message(backgroundPanel, `Theme colour ${background.state.theme}.`); });
   on(groundInput, 'input', () => { if (background) background.setGround(groundInput.value); });
@@ -378,10 +379,12 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
   on(particleInput, 'change', () => {
     if (!particles) return;
     choices(particleInput, PARTICLE_CHOICES, particleInput.value);
-    const applied = particles.setMode(particleInput.value);
-    message(backgroundPanel, isPhotoMode(applied)
-      ? `Particles ${applied}: the photo becomes a point cloud; the pointer ${PHOTO_MODES[applied] === 'gather' ? 'pulls' : 'pushes'} it.`
-      : `Particles ${applied}.`);
+    message(backgroundPanel, `Extra particle field ${particles.setMode(particleInput.value)}.`);
+  });
+  on(cloudInput, 'change', () => {
+    if (!particles) return;
+    choices(cloudInput, CLOUD_CHOICES, cloudInput.value);
+    message(backgroundPanel, `The pointer now ${particles.setCloudPointer(cloudInput.value) === 'pull' ? 'pulls' : 'pushes'} the photo cloud.`);
   });
   on(photoInput, 'change', () => {
     const file = photoInput.files && photoInput.files[0];
@@ -397,7 +400,10 @@ export function installFeatureWindows({ windows, api, toast = () => {}, getState
     if (!background) return;
     themeInput.value = background.state.theme;
     groundInput.value = background.state.ground;
-    if (particles) choices(particleInput, PARTICLE_CHOICES, particles.mode);
+    if (particles) {
+      choices(particleInput, PARTICLE_CHOICES, particles.mode);
+      choices(cloudInput, CLOUD_CHOICES, particles.cloudPointer);
+    }
   };
 
   // Workspace browsing never changes cwd until an explicit, confirmed Open action.

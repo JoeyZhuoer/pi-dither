@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  LINK_DISTANCE, PARTICLE_CHOICES, PARTICLE_MODES, PHOTO_POINTS, PHOTO_SPEED, PHOTO_STRENGTH, POINTER_RADIUS,
-  createField, createPhotoPool, drawField, drawPhotoCloud, isPhotoMode, linkPairs, particleCount, particleMode, photoCloud, readParticles, stepField, stepPhotoCloud, writeParticles,
+  CLOUD_CHOICES, CLOUD_POINTER_KEY, CLOUD_POINTERS, LINK_DISTANCE, PARTICLE_CHOICES, PARTICLE_MODES, PHOTO_POINTS, PHOTO_SPEED,
+  cloudPointer, cloudStrength, createField, createPhotoPool, drawField, drawPhotoCloud, linkPairs, particleCount, particleMode, photoCloud,
+  readCloudPointer, readParticles, stepField, stepPhotoCloud, writeCloudPointer, writeParticles,
 } from '../desktop/public/particles.js';
 
 // Small deterministic PRNG so physics tests never flake.
@@ -78,16 +79,6 @@ test('particles collide elastically and leave a short flash', () => {
   assert.equal(field.flashes.length, 0, 'flashes expire');
 });
 
-test('the pointer stirs nearby particles only', () => {
-  const field = { width: 400, height: 400, particles: [
-    { x: 200, y: 200, vx: 0, vy: 0, r: 1 },
-    { x: 200 + POINTER_RADIUS + 40, y: 200, vx: 0, vy: 0, r: 1 },
-  ], flashes: [] };
-  stepField(field, { width: 400, height: 400, seconds: 1 / 30, pointer: { x: 200, y: 200 } });
-  assert.ok(Math.hypot(field.particles[0].vx, field.particles[0].vy) > 0, 'the near particle is pushed');
-  assert.equal(field.particles[1].vx, 0); assert.equal(field.particles[1].vy, 0, 'the far particle is untouched');
-});
-
 test('links and drawing follow the constellation rules', () => {
   const field = { width: 300, height: 200, particles: [
     { x: 10, y: 10, vx: 0, vy: 0, r: 1 },
@@ -98,9 +89,10 @@ test('links and drawing follow the constellation rules', () => {
   assert.equal(pairs.length, 1);
   assert.deepEqual([pairs[0].i, pairs[0].j], [0, 1]);
   const { ctx, calls } = frame();
-  assert.equal(drawField(ctx, field, { pointer: { x: 12, y: 12 } }), true);
+  assert.equal(drawField(ctx, field), true);
   assert.equal(calls.fillRect, 3, 'one dot per particle');
-  assert.ok(calls.lineTo >= 2, 'a link and a pointer link are stroked');
+  assert.equal(calls.lineTo, 1, 'only the close pair is linked');
+  assert.equal(calls.moveTo, 1);
   assert.equal(calls.strokeRect, 1, 'one collision flash');
   assert.ok(calls.styles.some((style) => style.startsWith('rgba(')), 'links fade with distance');
   assert.ok(calls.styles.every((style) => !style.includes('NaN')));
@@ -123,14 +115,29 @@ function photoSample(size = 40) {
   return { data, width: size, height: size };
 }
 
-test('photo modes are selectable and share the reference force constants', () => {
-  assert.equal(isPhotoMode('photo'), true); assert.equal(isPhotoMode('photo-gather'), true);
-  assert.equal(isPhotoMode('dense'), false);
-  assert.equal(particleMode('photo'), 'photo'); assert.equal(particleMode('PHOTO-GATHER'), 'photo-gather');
-  assert.equal(particleCount('photo'), PHOTO_POINTS); assert.equal(particleCount('photo-gather'), PHOTO_POINTS);
-  assert.deepEqual(PARTICLE_CHOICES.map(([value]) => value), ['off', 'sparse', 'normal', 'dense', 'photo', 'photo-gather']);
-  assert.equal(PHOTO_STRENGTH.gather, 40); assert.equal(PHOTO_STRENGTH.spread, -100);
+test('particle modes and the cloud pointer keep the reference constants', () => {
+  assert.deepEqual(PARTICLE_CHOICES.map(([value]) => value), ['off', 'sparse', 'normal', 'dense']);
+  assert.deepEqual(CLOUD_CHOICES.map(([value]) => value), ['push', 'pull']);
+  assert.equal(particleMode('photo'), 'off', 'legacy photo modes are no longer particle modes');
+  assert.equal(CLOUD_POINTERS.push, -100, 'the site default spread');
+  assert.equal(CLOUD_POINTERS.pull, 40, 'the site gather');
   assert.deepEqual(PHOTO_SPEED, [20, 30], 'the site easing range');
+  assert.equal(cloudPointer('pull'), 'pull'); assert.equal(cloudPointer(' PULL '), 'pull');
+  assert.equal(cloudPointer('nonsense'), 'push'); assert.equal(cloudPointer(null), 'push');
+  assert.equal(cloudStrength('pull'), 40); assert.equal(cloudStrength('push'), -100);
+  const map = new Map();
+  const storage = { getItem: (key) => map.get(key) ?? null, setItem: (key, value) => map.set(key, String(value)) };
+  assert.equal(readCloudPointer(storage), 'push', 'defaults to the site behaviour');
+  assert.equal(writeCloudPointer(storage, 'pull'), 'pull');
+  assert.equal(map.get(CLOUD_POINTER_KEY), 'pull');
+  assert.equal(readCloudPointer(storage), 'pull');
+  assert.equal(writeCloudPointer(storage, 'nonsense'), 'push');
+  // Older installs stored the photo modes here; migrate instead of losing them.
+  map.clear(); map.set('pi-desktop:particles:v1', 'photo-gather');
+  assert.equal(readCloudPointer(storage), 'pull');
+  map.clear(); map.set('pi-desktop:particles:v1', 'photo');
+  assert.equal(readCloudPointer(storage), 'push');
+  assert.equal(readCloudPointer({ getItem() { throw new Error('denied'); } }), 'push');
 });
 
 test('the photo becomes a centred, deterministic point cloud with sampled colours', () => {
@@ -164,8 +171,8 @@ test('stepPhotoCloud mirrors the site: spring home plus a signed 1/(1+d)^2 force
   assert.ok(home[0].a > -1 && home[0].a < 1, 'alpha eases toward the target');
   // Spread pushes away from the pointer (negative strength), gather pulls to it.
   const spread = make(), gather = make();
-  stepPhotoCloud(spread, cloud, { pointer: { x: 10, y: 0 }, strength: PHOTO_STRENGTH.spread });
-  stepPhotoCloud(gather, cloud, { pointer: { x: 10, y: 0 }, strength: PHOTO_STRENGTH.gather });
+  stepPhotoCloud(spread, cloud, { pointer: { x: 10, y: 0 }, strength: CLOUD_POINTERS.push });
+  stepPhotoCloud(gather, cloud, { pointer: { x: 10, y: 0 }, strength: CLOUD_POINTERS.pull });
   assert.ok(spread[0].x < 0, `spread pushes away (${spread[0].x.toFixed(2)})`);
   assert.ok(gather[0].x > home[0].x, `gather pulls past the spring (${gather[0].x.toFixed(2)})`);
   for (let step = 0; step < 400; step++) stepPhotoCloud(gather, cloud, { pointer: null });

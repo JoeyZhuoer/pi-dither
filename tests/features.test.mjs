@@ -182,7 +182,8 @@ test('feature menu, appearance window and window settings exist in the shell', a
   assert.match(html, /data-testid not needed|/);
   assert.match(html, /id="arrange"/); assert.match(html, /id="tasks"/);
   assert.doesNotMatch(html, /background-motion|id="backdrop"/);
-  assert.match(html, /id="background"/);
+  assert.doesNotMatch(html, /id="background"/);
+  assert.match(html, /id="particles"/);
   assert.match(html, /The desktop chrome and ground colours are yours in <strong>Appearance<\/strong>/);
   assert.match(html, /dithered photo/);
 });

@@ -1,44 +1,33 @@
-// Optional particle layer over the background.
+// The background particle layer.
 //
-// Two behaviours share one canvas and one frame loop:
-//  - free field: drifting dots linked by faint lines with elastic collisions
-//    and a pointer stir (the default constellation look);
-//  - photo cloud: the user's image turned into a point cloud, animated with the
-//    reference site's logic — a spring back to each point's home position plus a
-//    1/(1+d)² pointer force that pushes (spread) or pulls (gather), with per-point
-//    colour/alpha easing.
+// It renders the photo as a point cloud using the reference site's motion — a
+// spring back to each point's home position plus a signed 1/(1+d)² pointer
+// force — and, optionally, a free drifting field on top. There is no other
+// background mouse interaction: the pointer only ever feeds the site's force,
+// and everything springs home when it leaves.
 // Physics helpers are pure (randomness is injected) so tests need no browser.
 import { backgroundSize, ditherPhoto } from './background.js';
 
 export const PARTICLES_KEY = 'pi-desktop:particles:v1';
+export const CLOUD_POINTER_KEY = 'pi-desktop:cloud-pointer:v1';
 export const PARTICLE_MODES = { off: 0, sparse: 70, normal: 130, dense: 220 };
-// Photo-cloud modes and their pointer strengths, mirroring the reference site's
-// signed-force switch (its GATHER uses +40, its default SPREAD −100).
-export const PHOTO_MODES = { photo: 'spread', 'photo-gather': 'gather' };
-export const PHOTO_STRENGTH = { spread: -100, gather: 40 };
+export const PARTICLE_CHOICES = [['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal'], ['dense', 'Dense']];
+// The reference site's signed force: its default SPREAD pushes, its GATHER pulls.
+export const CLOUD_POINTERS = { push: -100, pull: 40 };
+export const CLOUD_CHOICES = [['push', 'Push (site default)'], ['pull', 'Pull']];
 export const PHOTO_POINTS = 4000;
 export const PHOTO_SPEED = [20, 30];
-export const PARTICLE_CHOICES = [
-  ['off', 'Off'], ['sparse', 'Sparse'], ['normal', 'Normal'], ['dense', 'Dense'],
-  ['photo', 'Photo cloud (push)'], ['photo-gather', 'Photo cloud (pull)'],
-];
 export const LINK_DISTANCE = 90;
-export const POINTER_RADIUS = 80;
 export const INK = '#20201f';
 const MAX_PARTICLES = 400;
 
-export function isPhotoMode(value) {
-  return Object.hasOwn(PHOTO_MODES, String(value ?? ''));
-}
-
 export function particleMode(value) {
   const mode = String(value ?? '').trim().toLowerCase();
-  return Object.hasOwn(PARTICLE_MODES, mode) || Object.hasOwn(PHOTO_MODES, mode) ? mode : 'off';
+  return Object.hasOwn(PARTICLE_MODES, mode) ? mode : 'off';
 }
 
 export function particleCount(value) {
-  const mode = particleMode(value);
-  return isPhotoMode(mode) ? PHOTO_POINTS : PARTICLE_MODES[mode];
+  return PARTICLE_MODES[particleMode(value)];
 }
 
 export function readParticles(storage) {
@@ -49,6 +38,33 @@ export function writeParticles(storage, value) {
   const mode = particleMode(value);
   try { storage?.setItem(PARTICLES_KEY, mode); } catch { /* Optional storage. */ }
   return mode;
+}
+
+export function cloudPointer(value) {
+  return String(value ?? '').trim().toLowerCase() === 'pull' ? 'pull' : 'push';
+}
+
+export function cloudStrength(value) {
+  return CLOUD_POINTERS[cloudPointer(value)];
+}
+
+// The cloud pointer is its own setting; older installs stored the photo modes in
+// the particle-mode key, so migrate those choices instead of losing them.
+export function readCloudPointer(storage) {
+  try {
+    const stored = storage?.getItem(CLOUD_POINTER_KEY);
+    if (stored === 'pull' || stored === 'push') return stored;
+    const legacy = String(storage?.getItem(PARTICLES_KEY) ?? '');
+    if (legacy === 'photo-gather') return 'pull';
+    if (legacy === 'photo') return 'push';
+  } catch { /* Optional storage. */ }
+  return 'push';
+}
+
+export function writeCloudPointer(storage, value) {
+  const next = cloudPointer(value);
+  try { storage?.setItem(CLOUD_POINTER_KEY, next); } catch { /* Optional storage. */ }
+  return next;
 }
 
 export function createField(width, height, count, random = Math.random) {
@@ -62,28 +78,15 @@ export function createField(width, height, count, random = Math.random) {
   return field;
 }
 
-// One deterministic step: drift, edge bounces, pointer stir, elastic collisions.
-export function stepField(field, { width = field.width, height = field.height, seconds = 1 / 60, pointer } = {}) {
+// One deterministic step: drift, edge bounces and elastic collisions. The field
+// has no pointer interaction of its own.
+export function stepField(field, { width = field.width, height = field.height, seconds = 1 / 60 } = {}) {
   const dt = Math.min(.05, Math.max(0, Number(seconds) || 0));
   field.width = Math.max(1, width); field.height = Math.max(1, height);
   const { particles } = field;
   for (const particle of particles) {
-    if (pointer) {
-      const dx = particle.x - pointer.x, dy = particle.y - pointer.y;
-      const distance = Math.hypot(dx, dy);
-      if (distance < POINTER_RADIUS) {
-        // Push away with a slight swirl, so the cursor stirs the field. A
-        // particle exactly under the pointer pushes along its own heading.
-        const drift = Math.hypot(particle.vx, particle.vy);
-        const nx = distance > .001 ? dx / distance : (drift > .001 ? particle.vx / drift : 1);
-        const ny = distance > .001 ? dy / distance : (drift > .001 ? particle.vy / drift : 0);
-        const push = (1 - distance / POINTER_RADIUS) * 90 * dt;
-        particle.vx += nx * push - ny * push * .35;
-        particle.vy += ny * push + nx * push * .35;
-      }
-    }
     // Keep drift lively with a bounded speed band instead of random nudges, so
-    // steps stay deterministic and untouched particles stay untouched.
+    // steps stay deterministic.
     const speed = Math.hypot(particle.vx, particle.vy);
     if (speed > 60) { particle.vx = particle.vx / speed * 60; particle.vy = particle.vy / speed * 60; }
     else if (speed !== 0 && speed < 10) { particle.vx = particle.vx / speed * 10; particle.vy = particle.vy / speed * 10; }
@@ -133,22 +136,16 @@ const channel = (value) => {
   return match ? [parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16)] : [32, 32, 31];
 };
 
-export function drawField(ctx, field, { ink = INK, pointer } = {}) {
+export function drawField(ctx, field, { ink = INK } = {}) {
   if (!ctx || !field) return false;
   const { particles } = field, [red, green, blue] = channel(ink);
   // Faint links, bucketed by strength so each level is a single stroke path.
   const buckets = new Map();
-  const addLink = (ax, ay, bx, by, level) => {
-    const list = buckets.get(level) || [];
-    list.push([ax, ay, bx, by]); buckets.set(level, list);
-  };
   for (const { i, j, gap } of linkPairs(field)) {
     const level = Math.max(1, Math.min(4, Math.round((1 - gap / LINK_DISTANCE) * 4)));
-    addLink(particles[i].x, particles[i].y, particles[j].x, particles[j].y, level);
-  }
-  if (pointer) for (const particle of particles) {
-    const gap = Math.hypot(particle.x - pointer.x, particle.y - pointer.y);
-    if (gap <= LINK_DISTANCE) addLink(pointer.x, pointer.y, particle.x, particle.y, 1);
+    const list = buckets.get(level) || [];
+    list.push([particles[i].x, particles[i].y, particles[j].x, particles[j].y]);
+    buckets.set(level, list);
   }
   ctx.lineWidth = 1;
   for (const [level, segments] of buckets) {
@@ -214,7 +211,7 @@ export function createPhotoPool(count, width, height, random = Math.random) {
 
 // One frame of the reference site's motion: ease toward the assigned point with
 // s = 1/speed, plus the signed pointer force strength * (pointer - p) / (1+d)².
-export function stepPhotoCloud(pool, cloud, { pointer, strength = PHOTO_STRENGTH.spread } = {}) {
+export function stepPhotoCloud(pool, cloud, { pointer, strength = cloudStrength('push') } = {}) {
   const count = cloud?.count ?? 0, points = cloud?.points;
   for (const particle of pool) {
     const ease = 1 / particle.speed;
@@ -260,44 +257,46 @@ export function drawPhotoCloud(ctx, pool, cloud, { pointer, centerX = 0, centerY
 }
 
 // Renders only; owns the one animation frame loop, pauses when hidden or when
-// the system asks for reduced motion, and stops entirely when switched off.
-// `photo(width, height)` supplies the image sample for the point-cloud modes.
+// the system asks for reduced motion, and stops entirely when there is nothing
+// to draw. `photo(width, height)` supplies the image sample for the point cloud.
 export function createParticles({ canvas, storage, photo, document: doc = canvas?.ownerDocument ?? globalThis.document, random } = {}) {
   const view = () => doc?.defaultView ?? globalThis;
   const media = view()?.matchMedia?.('(prefers-reduced-motion: reduce)');
   const source = typeof random === 'function' ? random : Math.random;
-  let mode = readParticles(storage), field = null, pool = null, cloud = null;
+  let mode = readParticles(storage), pointerMode = readCloudPointer(storage);
+  let field = null, pool = null, cloud = null, resizeTimer = null;
   let frame = null, lastTime = 0, accumulator = 0, pointer = null, inside = false, disposed = false;
   const ctx = canvas?.getContext?.('2d');
   const now = () => view()?.performance?.now?.() ?? Date.now();
-  const suspended = () => disposed || mode === 'off' || Boolean(doc?.hidden) || Boolean(media?.matches);
+  const active = () => !disposed && (Boolean(cloud) || (mode !== 'off' && Boolean(field)));
+  const suspended = () => !active() || Boolean(doc?.hidden) || Boolean(media?.matches);
 
+  // The pool is 4000 slots so a smaller cloud simply leaves the rest fading out
+  // (the reference site keeps a fixed pool too). It is recreated on size changes
+  // and kept across photo changes, so points fly from the old cloud to the new.
   function rebuildCloud() {
-    if (!canvas || !isPhotoMode(mode) || typeof photo !== 'function') { cloud = null; return; }
+    if (!canvas || typeof photo !== 'function') { cloud = null; return; }
     try { cloud = photoCloud(photo(canvas.width, canvas.height), { max: PHOTO_POINTS, random: source }); }
     catch { cloud = null; }
+    if (cloud && !cloud.count) cloud = null;
+    if (cloud && !pool) pool = createPhotoPool(PHOTO_POINTS, canvas.width, canvas.height, source);
   }
 
   function resize() {
     if (!canvas) return;
     const { width, height } = backgroundSize(view()?.innerWidth ?? canvas.clientWidth, view()?.innerHeight ?? canvas.clientHeight);
     const changed = canvas.width !== width || canvas.height !== height;
-    if (changed) { canvas.width = width; canvas.height = height; }
-    if (isPhotoMode(mode)) {
-      if (!pool || changed) pool = createPhotoPool(particleCount(mode), width, height, source);
-      rebuildCloud();
-    } else {
-      field = createField(width, height, particleCount(mode), source);
-      pool = null; cloud = null;
-    }
+    if (changed) { canvas.width = width; canvas.height = height; pool = null; }
+    field = mode === 'off' ? null : createField(width, height, particleCount(mode), source);
+    if (typeof photo === 'function') rebuildCloud();
+    else { pool = null; cloud = null; }
   }
 
   function draw() {
     if (!ctx || !canvas) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (mode === 'off') return;
-    if (isPhotoMode(mode)) drawPhotoCloud(ctx, pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2 });
-    else if (field) drawField(ctx, field, { pointer: inside ? pointer : null });
+    if (field) drawField(ctx, field);
+    if (cloud) drawPhotoCloud(ctx, pool, cloud, { pointer: inside ? pointer : null, centerX: canvas.width / 2, centerY: canvas.height / 2 });
   }
 
   const schedule = (callback) => (typeof view()?.requestAnimationFrame === 'function'
@@ -315,13 +314,15 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     const current = Number.isFinite(time) ? time : now();
     const seconds = Math.min(.05, Math.max(0, (current - lastTime) / 1000));
     lastTime = current;
-    if (isPhotoMode(mode)) {
+    if (field) stepField(field, { width: canvas.width, height: canvas.height, seconds });
+    if (cloud) {
       // The reference site steps its cloud on a ~60fps queue with frame-based
       // easing, so keep that cadence even on a 120Hz display.
       accumulator = Math.min(.1, accumulator + seconds);
-      while (accumulator >= 1 / 60) { stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, strength: PHOTO_STRENGTH[PHOTO_MODES[mode]] }); accumulator -= 1 / 60; }
-    } else if (field) {
-      stepField(field, { width: canvas.width, height: canvas.height, seconds, pointer: inside ? pointer : null });
+      while (accumulator >= 1 / 60) {
+        stepPhotoCloud(pool, cloud, { pointer: inside ? pointer : null, strength: cloudStrength(pointerMode) });
+        accumulator -= 1 / 60;
+      }
     }
     draw();
     frame = schedule(tick);
@@ -339,20 +340,31 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
     pointer = { x, y }; inside = true;
     if (!suspended()) wake();
   };
+  // Leaving the window drops the force so the cloud springs home.
   const onPointerLeave = () => { inside = false; };
   const onVisibility = () => { if (suspended()) { unschedule(frame); frame = null; draw(); } else wake(); };
   const onMotion = () => { unschedule(frame); frame = null; draw(); if (!suspended()) wake(); };
+  const onResize = () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      resize(); draw();
+      if (!suspended()) wake();
+    }, 150);
+  };
 
   doc?.addEventListener?.('pointermove', onPointerMove, { passive: true });
   doc?.addEventListener?.('pointerleave', onPointerLeave, { passive: true });
   doc?.addEventListener?.('visibilitychange', onVisibility);
   view()?.addEventListener?.('blur', onPointerLeave);
-  view()?.addEventListener?.('resize', resize);
+  view()?.addEventListener?.('resize', onResize);
   if (media?.addEventListener) media.addEventListener('change', onMotion);
   else if (media?.addListener) media.addListener(onMotion);
 
   const controller = {
     get mode() { return mode; },
+    get cloudPointer() { return pointerMode; },
+    get hasCloud() { return Boolean(cloud); },
     setMode(value) {
       mode = writeParticles(storage, value);
       resize();
@@ -361,20 +373,30 @@ export function createParticles({ canvas, storage, photo, document: doc = canvas
       if (!suspended()) wake();
       return mode;
     },
+    setCloudPointer(value) {
+      pointerMode = writeCloudPointer(storage, value);
+      draw();
+      if (!suspended()) wake();
+      return pointerMode;
+    },
     // Rebuild the point cloud in place (particles keep flying to the new targets).
     refreshPhoto() {
-      if (!isPhotoMode(mode)) return false;
-      rebuildCloud(); draw();
-      return true;
+      if (!canvas) return false;
+      rebuildCloud();
+      draw();
+      unschedule(frame); frame = null;
+      if (!suspended()) wake();
+      return Boolean(cloud);
     },
     destroy() {
       disposed = true;
+      if (resizeTimer) clearTimeout(resizeTimer);
       unschedule(frame); frame = null;
       doc?.removeEventListener?.('pointermove', onPointerMove);
       doc?.removeEventListener?.('pointerleave', onPointerLeave);
       doc?.removeEventListener?.('visibilitychange', onVisibility);
       view()?.removeEventListener?.('blur', onPointerLeave);
-      view()?.removeEventListener?.('resize', resize);
+      view()?.removeEventListener?.('resize', onResize);
       if (media?.removeEventListener) media.removeEventListener('change', onMotion);
       else if (media?.removeListener) media.removeListener(onMotion);
       if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);

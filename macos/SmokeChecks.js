@@ -48,65 +48,70 @@ async function piDitherSmoke(stage) {
       win.querySelector('[aria-label="Close utility window"]').click();
     }
     check(sizes.size === 1 && [...sizes][0].startsWith('400px/'), 'utilities open at the minimum width with a medium height');
-    // Background window: ground colour and a locally dithered photo (no file dialog).
+    // Appearance window: colours, the photo point cloud and the extra field.
     $('[data-feature="background"]').click();
     await wait(() => !$('[data-window-id="background"]').hidden);
-    check(!$('#backdrop, #background-motion'), 'the old animated backdrop stays removed');
+    check(!$('#backdrop, #background-motion, #background'), 'the dithered backdrop canvas stays removed');
     const ground = $('[data-testid="background-ground"]');
     ground.value = '#123456'; ground.dispatchEvent(new Event('input', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:ground:v1') === '#123456', 'ground colour persists');
     check(getComputedStyle(document.documentElement).getPropertyValue('--ground').trim() === '#123456', 'ground colour applies to the desk');
     const photo = $('[data-testid="background-photo"]');
-    const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); });
+    const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#fff'; x.beginPath(); x.arc(32, 32, 20, 0, Math.PI * 2); x.fill(); c.toBlob(resolve, 'image/png'); });
     const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
     photo.files = transfer.files; photo.dispatchEvent(new Event('change', { bubbles: true }));
     await wait(() => localStorage.getItem('pi-desktop:photo:v1') !== null, 'photo stored');
-    const canvas = $('#background'), pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-    let inkCount = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 32 && pixels[i + 1] === 32 && pixels[i + 2] === 31) inkCount++;
-    check(inkCount > pixels.length / 4 * .15 && inkCount < pixels.length / 4 * .6, `photo dithers into ink (${inkCount})`);
-    check(!!$('[data-testid="background-theme"]'), 'theme control present');
+    // Cloud statistics: ink count plus the centroid of the drawn points.
+    const stats = () => {
+      const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let inked = 0, sumX = 0, sumY = 0;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] <= 8) continue;
+        const index = i >> 2, x = index % c.width;
+        inked++; sumX += x; sumY += (index - x) / c.width;
+      }
+      return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
+    };
+    const cloudHash = () => { const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i] ^ data[i + 3], 16777619); return hash; };
+    const shift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+    await wait(() => stats().inked > 200, 'photo cloud draws');
+    check(stats().inked > 200, 'the photo becomes a point cloud on the particle layer');
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    const home = stats();
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }));
+    await wait(() => shift(stats(), home) > 2, 'the pointer pushes the cloud');
+    check(shift(stats(), home) > 2, 'the pointer displaces the cloud');
+    document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+    await wait(() => shift(stats(), home) < 3, 'the cloud springs home');
+    check(shift(stats(), home) < 3 && Math.abs(stats().inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
+    const settledHash = cloudHash();
+    // The signed force switch mirrors the site's push/pull modes.
+    check(!localStorage.getItem('pi-desktop:cloud-pointer:v1'), 'push is the default without a stored choice');
+    const cloudSelect = $('[data-testid="background-cloud"]');
+    cloudSelect.value = 'pull'; cloudSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:cloud-pointer:v1') === 'pull', 'the pull variant persists');
+    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }));
+    // The pull gathers mass toward the cursor, so compare pixels rather than the centroid.
+    await wait(() => cloudHash() !== settledHash, 'pull moves the cloud');
+    document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }));
+    await wait(() => shift(stats(), home) < 3, 'pull springs home');
+    cloudSelect.value = 'push'; cloudSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    // Extra drifting field on top of the cloud.
+    const particleSelect = $('[data-testid="background-particles"]');
+    const cloudOnly = stats().inked;
+    particleSelect.value = 'dense'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'dense', 'the extra field persists');
+    await wait(() => stats().inked !== cloudOnly, 'the extra field animates');
+    particleSelect.value = 'off'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    check(localStorage.getItem('pi-desktop:particles:v1') === 'off', 'the extra field switches off');
     const theme = $('[data-testid="background-theme"]');
     theme.value = '#2a4b6c'; theme.dispatchEvent(new Event('input', { bubbles: true }));
     check(localStorage.getItem('pi-desktop:theme:v1') === '#2a4b6c', 'theme colour persists');
     check(getComputedStyle(document.documentElement).getPropertyValue('--pink').trim() === '#2a4b6c', 'theme colour applies to the chrome');
-    // Particle field: drifting dots, links, pointer stir and collision flashes.
-    const particleSelect = $('[data-testid="background-particles"]');
-    particleSelect.value = 'dense'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:particles:v1') === 'dense', 'particle density persists');
-    const particleInk = () => { const c = $('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) inked++; return inked; };
-    await wait(() => particleInk() > 50, 'particles draw');
-    check(particleInk() > 50, 'particles draw on their own layer');
-    const particlesBefore = particleInk();
-    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 380, clientY: 260, bubbles: true }));
-    await wait(() => particleInk() !== particlesBefore, 'particles animate');
-    check(particleInk() !== particlesBefore, 'the pointer stirs and the field keeps animating');
-    // Photo cloud: the same photo drives the site-style point cloud.
-    particleSelect.value = 'photo'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:particles:v1') === 'photo', 'photo cloud mode persists');
-    await wait(() => particleInk() > 200, 'photo cloud draws');
-    check(particleInk() > 200, 'the photo becomes many sampled points');
-    particleSelect.value = 'photo-gather'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:particles:v1') === 'photo-gather', 'the pull variant is selectable');
-    particleSelect.value = 'off'; particleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-    check(localStorage.getItem('pi-desktop:particles:v1') === 'off', 'particles can be switched off');
-    check(particleInk() === 0, 'the particle layer clears when off');
-    // Pointer ripple over the dithered dots: spread, then settle back exactly.
-    const canvasHash = () => { const c = $('#background'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let hash = 2166136261; for (let i = 0; i < data.length; i += 4) hash = Math.imul(hash ^ data[i], 16777619); return hash; };
-    // Earlier pointer moves may still be rippling; wait for a stable base first.
-    let basePattern = canvasHash();
-    for (let attempt = 0; attempt < 40; attempt++) {
-      let stable = true;
-      for (let sample = 0; sample < 3 && stable; sample++) { await new Promise(resolve => setTimeout(resolve, 200)); stable = canvasHash() === basePattern; }
-      if (stable) break;
-      basePattern = canvasHash();
-    }
-    document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }));
-    await wait(() => canvasHash() !== basePattern, 'ripple spreads');
-    check(canvasHash() !== basePattern, 'the dots spread under the pointer');
-    await wait(() => canvasHash() === basePattern, 'ripple restores');
-    check(canvasHash() === basePattern, 'the dots settle back exactly');
     $('[data-testid="background-remove"]').click();
     check(localStorage.getItem('pi-desktop:photo:v1') === null, 'photo removal clears storage');
+    await wait(() => stats().inked === 0, 'the cloud clears with the photo');
+    check(stats().inked === 0, 'the point cloud clears');
     $('[data-testid="background-default"]').click();
     check(localStorage.getItem('pi-desktop:ground:v1') === '#e58da5', 'default ground restored');
     $('[data-testid="background-theme-reset"]').click();

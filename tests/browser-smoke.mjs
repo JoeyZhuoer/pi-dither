@@ -105,7 +105,8 @@ try {
   assert.equal(await evaluate('document.querySelector("[data-window-id=windows], [data-feature=windows]")'), null, 'legacy Window Manager is not restored');
   assert.equal(await evaluate('document.querySelectorAll("[data-feature=tools]").length'), 1);
   assert.equal(await evaluate('document.querySelector("#backdrop, #background-motion")'), null, 'the old animated backdrop and its motion control are gone');
-  assert.ok(await evaluate('document.querySelector("#background") instanceof HTMLCanvasElement && document.querySelector("[data-feature=background]")'), 'the static background canvas and window exist');
+  assert.equal(await evaluate('document.querySelector("#background")'), null, 'the dithered background canvas is gone');
+  assert.ok(await evaluate('document.querySelector("#particles") instanceof HTMLCanvasElement && document.querySelector("[data-feature=background]")'), 'the point-cloud background layer and window exist');
   if (app) {
     // Synthetic busy states still update the aggregated fleet activity; no provider or prompt.
     const main = app.sessions.get('main');
@@ -119,41 +120,69 @@ try {
     await setActivity('stopped', 'idle', 'idle');
     main.state.phase = 'idle'; main.emit('change');
 
-    // Background window: ground colour plus a locally dithered photo.
-    assert.equal(await evaluate(`(() => { document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="background"]').click(); return !document.querySelector('[data-window-id="background"]').hidden; })()`), true, 'background window opens');
+    // Appearance window: colours, the photo point cloud and the extra field.
+    assert.equal(await evaluate(`(() => { document.querySelector('#window-menu-toggle').click(); document.querySelector('[data-feature="background"]').click(); return !document.querySelector('[data-window-id="background"]').hidden; })()`), true, 'appearance window opens');
     await evaluate(`{ const input = document.querySelector('[data-testid="background-ground"]'); input.value = '#123456'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
     assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--ground").trim()'), '#123456');
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:ground:v1")'), '#123456');
-    assert.equal(await evaluate(`(() => { const c = document.querySelector('#background'); return [c.width, c.height, Array.from(c.getContext('2d').getImageData(2, 2, 1, 1).data).slice(0, 3).join(',')].join('|'); })()`).then((value) => value.split('|')[2]), '18,52,86', 'canvas is filled with the chosen ground colour');
-    // A synthetic half-black/half-white photo exercises the dither without a file dialog.
+    assert.equal(await evaluate('getComputedStyle(document.body).backgroundColor'), 'rgb(18, 52, 86)', 'the desk uses the chosen ground colour');
+    // A synthetic half-black/half-white photo becomes the point cloud.
     await evaluate(`(async () => {
-      const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); });
-      const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'fixture.png', { type: 'image/png' }));
+      const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 64, 64); x.fillStyle = '#fff'; x.beginPath(); x.arc(32, 32, 20, 0, Math.PI * 2); x.fill(); c.toBlob(resolve, 'image/png'); });
+      const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'cloud.png', { type: 'image/png' }));
       const input = document.querySelector('[data-testid="background-photo"]');
       input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
     await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
-    const dithered = await evaluate(`(() => { const c = document.querySelector('#background'); const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let ink = 0; for (let i = 0; i < data.length; i += 4) if (data[i] === 32 && data[i + 1] === 32 && data[i + 2] === 31) ink++; return { ink, total: data.length / 4 }; })()`);
-    assert.ok(dithered.ink > dithered.total * .15 && dithered.ink < dithered.total * .6, `photo dithers into ink (${dithered.ink}/${dithered.total})`);
-    await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'removing the photo clears storage');
+    const cloudStats = `(() => {
+      const c = document.querySelector('#particles'), data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let inked = 0, sumX = 0, sumY = 0;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] <= 8) continue;
+        const index = i >> 2, x = index % c.width;
+        inked++; sumX += x; sumY += (index - x) / c.width;
+      }
+      return { inked, cx: sumX / (inked || 1), cy: sumY / (inked || 1) };
+    })()`;
+    const cloudHash = `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i] ^ d[i + 3], 16777619); return h; })()`;
+    const cloudShift = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+    await until(`${cloudStats}.inked > 200`);
+    assert.ok((await evaluate(cloudStats)).inked > 200, 'the photo becomes a point cloud on the particle layer');
+    await evaluate('new Promise((resolve) => setTimeout(resolve, 2500))');
+    const home = await evaluate(cloudStats);
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }))`);
+    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) > 2`);
+    assert.ok(cloudShift(await evaluate(cloudStats), home) > 2, 'the pointer displaces the cloud');
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
+    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) < 3`);
+    const settled = await evaluate(cloudStats);
+    assert.ok(cloudShift(settled, home) < 3 && Math.abs(settled.inked - home.inked) <= Math.max(30, home.inked * .03), 'the cloud springs back to its home shape');
+    const settledHash = await evaluate(cloudHash);
+    // The signed force switch mirrors the site's push/pull modes.
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), null, 'push is the default without a stored choice');
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'pull'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:cloud-pointer:v1")'), 'pull', 'the pull variant persists');
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 220, clientY: 260, bubbles: true }))`);
+    // The pull gathers mass toward the cursor, so compare pixels rather than the centroid.
+    await until(`${cloudHash} !== ${settledHash}`);
+    await evaluate(`document.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
+    await until(`Math.hypot((${cloudStats}).cx - ${home.cx}, (${cloudStats}).cy - ${home.cy}) < 3`);
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-cloud"]'); select.value = 'push'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    // Extra drifting field on top of the cloud.
+    const cloudOnly = (await evaluate(cloudStats)).inked;
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'dense'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'dense', 'the extra field persists');
+    await until(`${cloudStats}.inked !== ${cloudOnly}`);
+    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'off'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'off', 'the extra field switches off');
     // Theme colour paints the chrome and persists separately from the ground.
     await evaluate(`{ const input = document.querySelector('[data-testid="background-theme"]'); input.value = '#2a4b6c'; input.dispatchEvent(new Event('input', { bubbles: true })); }`);
     assert.equal(await evaluate('getComputedStyle(document.documentElement).getPropertyValue("--pink").trim()'), '#2a4b6c');
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#2a4b6c');
-    // Particle field: third state in the Appearance window.
-    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'dense'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'dense');
-    const particlePixels = () => `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) inked++; return inked; })()`;
-    await until(`${particlePixels()} > 50`);
-    assert.ok(await evaluate(`${particlePixels()} > 50`), 'particles draw onto their own layer');
-    const particlesBefore = await evaluate(particlePixels());
-    await until(`${particlePixels()} !== ${particlesBefore}`);
-    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 400, clientY: 300, bubbles: true }))`);
-    await until(`${particlePixels()} > 50`);
-    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'off'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'off', 'particles can be switched off');
-    assert.equal(await evaluate(particlePixels()), 0, 'the particle layer clears when off');
+    await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
+    assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'removing the photo clears storage');
+    await until(`${cloudStats}.inked === 0`);
+    assert.equal((await evaluate(cloudStats)).inked, 0, 'the point cloud clears with the photo');
     await evaluate(`document.querySelector('[data-testid="background-theme-reset"]').click()`);
     assert.equal(await evaluate('localStorage.getItem("pi-desktop:theme:v1")'), '#e58da5', 'default theme is restored');
     await evaluate(`document.querySelector('[data-testid="background-default"]').click()`);
@@ -180,38 +209,6 @@ try {
   assert.equal(await evaluate('document.querySelector("[data-window-id=git]").hidden'), false, 'settings can open a bottom-bar-hidden window directly');
   await evaluate(`document.querySelector('[data-window-id=git] button[aria-label="Close utility window"]').click()`);
 
-  // Pointer ripple: with a photo in place the dots spread under the pointer and
-  // settle back exactly to the base pattern.
-  if (app) {
-    const canvasHash = `(() => { const c = document.querySelector('#background'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let h = 2166136261; for (let i = 0; i < d.length; i += 4) h = Math.imul(h ^ d[i], 16777619); return h; })()`;
-    await evaluate(`(async () => { const blob = await new Promise((resolve) => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, 32, 64); x.fillStyle = '#fff'; x.fillRect(32, 0, 32, 64); c.toBlob(resolve, 'image/png'); }); const transfer = new DataTransfer(); transfer.items.add(new File([blob], 'ripple.png', { type: 'image/png' })); const input = document.querySelector('[data-testid="background-photo"]'); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); })()`);
-    await until('localStorage.getItem("pi-desktop:photo:v1") !== null');
-    // Earlier pointer moves may still be rippling; wait for a stable base first.
-    let basePattern = await evaluate(canvasHash);
-    for (let attempt = 0; attempt < 40; attempt++) {
-      let stable = true;
-      for (let sample = 0; sample < 3 && stable; sample++) { await evaluate('new Promise((resolve) => setTimeout(resolve, 200))'); stable = (await evaluate(canvasHash)) === basePattern; }
-      if (stable) break;
-      basePattern = await evaluate(canvasHash);
-    }
-    await evaluate(`document.dispatchEvent(new PointerEvent('pointermove', { clientX: 120, clientY: 200, bubbles: true }))`);
-    await until(`${canvasHash} !== ${basePattern}`);
-    assert.notEqual(await evaluate(canvasHash), basePattern, 'the dots spread under the pointer');
-    await until(`${canvasHash} === ${basePattern}`);
-    assert.equal(await evaluate(canvasHash), basePattern, 'the dots settle back exactly');
-    // The same photo can drive the site-style point cloud instead of the free field.
-    const particleInk = `(() => { const c = document.querySelector('#particles'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let inked = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) inked++; return inked; })()`;
-    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'photo'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'photo', 'photo cloud mode persists');
-    await until(`${particleInk} > 200`);
-    assert.ok(await evaluate(`${particleInk} > 200`), 'the photo becomes many sampled points');
-    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'photo-gather'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:particles:v1")'), 'photo-gather', 'the pull variant is selectable');
-    await evaluate(`{ const select = document.querySelector('[data-testid="background-particles"]'); select.value = 'off'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
-    assert.equal(await evaluate(particleInk), 0, 'the photo cloud clears when off');
-    await evaluate(`document.querySelector('[data-testid="background-remove"]').click()`);
-    assert.equal(await evaluate('localStorage.getItem("pi-desktop:photo:v1")'), null, 'ripple fixture photo removed');
-  }
   await evaluate('document.querySelector("#help").click(); document.querySelector("#help-dialog").close()');
   assert.equal(await evaluate('document.querySelectorAll(".sub-window").length'), 0, 'no child shell exists before an explicit launch or delegation');
   assert.equal(await evaluate('document.querySelector(".life-widget")'), null, 'decorative glider replaced');
@@ -361,7 +358,7 @@ try {
     assert.match(await evaluate('document.querySelector(".usage-totals").textContent'), /— TOK/);
   }
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
-  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, dithered photo, particle field, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
+  console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, arrange, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.close();
   chrome.kill('SIGTERM');
