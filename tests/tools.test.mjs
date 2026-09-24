@@ -198,6 +198,13 @@ test('real installed Pi tools: none/all/subset, runtime new/clone, resume/worksp
     const settingsBefore = await readFile(join(profile, 'settings.json'), 'utf8');
     app = await createDesktop({ port: 0, cwd: project, host, dataDir, factory: (options) => new PiSession({ ...options, env }) });
     const api = client(app); let main = app.sessions.get('main'); await main.ready;
+    // A new Pi Dither session must not be pre-named after the agent: the `pi`
+    // resume list then falls back to the first user message instead of showing
+    // the generic "Main agent". An empty session may have no file yet.
+    assert.match(main.sessionFile, /\.jsonl$/);
+    let sessionText = '';
+    try { sessionText = await readFile(main.sessionFile, 'utf8'); } catch { /* Empty sessions persist on first entry. */ }
+    assert.doesNotMatch(sessionText, /"type":"session_info"[^\n]*"name":"Main agent"/, 'no forced Main agent session name');
     const authBefore = await readFile(join(profile, 'auth.json'), 'utf8');
     assert.deepEqual([...main.state.activeTools].sort(), ['bash', 'edit', 'read', 'write']);
     assert.ok(main.state.availableTools.length >= 7);

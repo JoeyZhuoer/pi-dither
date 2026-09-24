@@ -99,20 +99,20 @@ test('widget store normalization applies defaults, ignores unknown types, keeps 
     { type: 'ghost', enabled: true, x: 0, y: 0, w: 1, h: 1 },
   ] });
   registerFake(host, 'usage', { sizes: [[2, 2], [2, 3]], defaultSize: [2, 3] });
-  registerFake(host, 'model', { sizes: [[2, 3]], defaultSize: [2, 3] });
+  registerFake(host, 'model', { sizes: [[2, 2], [2, 3]], defaultSize: [2, 3] });
   const clock = root.querySelector('[data-testid="widget-clock"]');
   const usage = root.querySelector('[data-testid="widget-usage"]');
   const model = root.querySelector('[data-testid="widget-model"]');
   assert.ok(clock && usage && model, 'every registered type renders');
   assert.equal(root.querySelector('[data-testid="widget-ghost"]'), null, 'unknown stored types are ignored');
-  // clock: out-of-range x/y clamped to the origin, unsupported 3x3 falls back to its 2x2.
+  // clock: out-of-range x/y clamped to the origin, unsupported 3x3 falls back to its 2x1.
   assert.equal(clock.hidden, false);
   assert.equal(clock.style.left, leftOf(0)); assert.equal(clock.style.top, topOf(0));
-  assert.deepEqual(sizeOf(2, 2), [clock.style.width, clock.style.height].map(parseFloat));
-  // usage: disabled keeps its stored geometry instead of the 0,2 default.
+  assert.deepEqual(sizeOf(2, 1), [clock.style.width, clock.style.height].map(parseFloat));
+  // usage: disabled keeps its stored geometry instead of the 0,1 default.
   assert.equal(usage.hidden, true); assert.equal(usage.style.top, topOf(4));
-  // model: missing from storage, so it is appended disabled at the 0,5 default.
-  assert.equal(model.hidden, true); assert.equal(model.style.top, topOf(5));
+  // model: missing from storage, so it is appended disabled at the 0,4 default.
+  assert.equal(model.hidden, true); assert.equal(model.style.top, topOf(4));
   assert.ok(persisted(storage).items.some((item) => item.type === 'ghost'), 'loading alone leaves storage untouched');
   assert.deepEqual(WIDGET_SIZES, [[1, 1], [2, 1], [1, 2], [2, 2], [2, 3]]);
   host.dispose();
@@ -121,12 +121,12 @@ test('widget store normalization applies defaults, ignores unknown types, keeps 
 test('widget defaults materialize for a registered type missing from storage', () => {
   const { root, host } = fixture();
   registerFake(host, 'usage', { sizes: [[2, 3]], defaultSize: [2, 3] });
-  registerFake(host, 'model', { sizes: [[2, 3]], defaultSize: [2, 3] });
+  registerFake(host, 'model', { sizes: [[2, 2], [2, 3]], defaultSize: [2, 3] });
   assert.equal(root.querySelector('[data-testid="widget-clock"]').hidden, false, 'clock defaults enabled');
   const usage = root.querySelector('[data-testid="widget-usage"]');
   const model = root.querySelector('[data-testid="widget-model"]');
-  assert.equal(usage.hidden, false); assert.equal(usage.style.top, topOf(2));
-  assert.equal(model.hidden, true); assert.equal(model.style.top, topOf(5));
+  assert.equal(usage.hidden, false); assert.equal(usage.style.top, topOf(1));
+  assert.equal(model.hidden, true); assert.equal(model.style.top, topOf(4));
   host.dispose();
 });
 
@@ -153,13 +153,13 @@ test('widget drag snaps to the grid, rejects overlap and Escape cancels', () => 
   // clock onto it pushes it to the next free row instead of rejecting the move.
   registerFake(host, 'usage', { sizes: [[2, 3]], defaultSize: [2, 3] });
   const usage = root.querySelector('[data-testid="widget-usage"]');
-  assert.equal(usage.style.top, topOf(3), 'the later widget is relocated clear of the moved clock');
+  assert.equal(usage.style.top, topOf(2), 'the later widget is relocated clear of the moved clock');
   titlebar.dispatchEvent(pointer('pointerdown', 0, 0));
   document.dispatchEvent(pointer('pointermove', 0, WIDGET_ROW + WIDGET_GAP));
   assert.equal(clock.style.top, topOf(2), 'the drag lands on the next row');
-  assert.equal(usage.style.top, topOf(4), 'the overlapped widget is pushed to the next free row');
+  assert.equal(usage.style.top, topOf(3), 'the overlapped widget is pushed to the next free row');
   document.dispatchEvent(pointer('pointerup', 0, WIDGET_ROW + WIDGET_GAP));
-  assert.equal(itemOf(storage, 'usage').y, 4, 'the pushed widget is persisted');
+  assert.equal(itemOf(storage, 'usage').y, 3, 'the pushed widget is persisted');
   host.dispose();
 });
 
@@ -199,7 +199,7 @@ test('widget manager toggles, resizes and resets with immediate persistence', ()
   assert.deepEqual([itemOf(storage, 'usage').w, itemOf(storage, 'usage').h], [2, 2]);
   assert.equal(usage.style.height, `${sizeOf(2, 2)[1]}px`);
   root.querySelector('[data-testid="widgets-reset"]').click();
-  assert.deepEqual([itemOf(storage, 'usage').w, itemOf(storage, 'usage').h, itemOf(storage, 'usage').y], [2, 3, 2], 'reset restores widget defaults');
+  assert.deepEqual([itemOf(storage, 'usage').w, itemOf(storage, 'usage').h, itemOf(storage, 'usage').y], [2, 3, 1], 'reset restores widget defaults');
   assert.equal(usage.style.height, `${sizeOf(2, 3)[1]}px`);
   assert.equal(itemOf(storage, 'clock').enabled, true);
   host.dispose();
@@ -224,7 +224,7 @@ test('widget context exposes the selected agent, host api and widgets self-refer
   const { host } = fixture({ selected });
   const calls = [];
   registerFake(host, 'probe', { render() {}, update(state, ctx) {
-    calls.push({ state, selected: ctx.getSelectedAgent(), self: ctx.widgets, hasApi: typeof ctx.api === 'function' });
+    calls.push({ state, selected: ctx.getSelectedAgent(), self: ctx.widgets, hasApi: typeof ctx.api === 'function', size: ctx.size });
   } });
   host.refresh({ connected: true });
   assert.equal(calls.length, 1);
@@ -232,5 +232,6 @@ test('widget context exposes the selected agent, host api and widgets self-refer
   assert.equal(calls[0].selected, selected, 'getSelectedAgent follows the current selection');
   assert.equal(calls[0].self.register, host.register, 'ctx.widgets is the host api');
   assert.equal(calls[0].hasApi, true);
+  assert.deepEqual([calls[0].size.w, calls[0].size.h], [2, 2], 'ctx.size carries the widget grid size');
   host.dispose();
 });

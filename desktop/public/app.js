@@ -22,7 +22,7 @@ const drafts = new Map();
 const readOnlyTools = ['read', 'grep', 'find', 'ls'];
 let connected = false, workspace = '', version = '', desktopVersion = '', contextId, hasSnapshot = false, features, widgets;
 let usageAgentId = 'main';
-const featureState = () => ({ connected: connected && ['0.3.0', '0.4.0', '0.5.0'].includes(desktopVersion), cwd: workspace, contextId, agents: [...states.values()] });
+const featureState = () => ({ connected: connected && ['0.3.0', '0.4.0', '0.5.0', '0.6.0'].includes(desktopVersion), cwd: workspace, contextId, agents: [...states.values()] });
 let token = new URLSearchParams(location.hash.slice(1)).get('token');
 try {
   token ||= sessionStorage.getItem('pi-desktop:token');

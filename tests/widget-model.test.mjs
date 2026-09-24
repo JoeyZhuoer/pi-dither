@@ -85,7 +85,7 @@ function fixture() {
   const root = doc.createElement('div'); doc.body.append(root);
   const calls = [];
   const api = async (path, body) => { calls.push({ path, body: body && structuredClone(body) }); return body ? { ok: true } : {}; };
-  const ctx = { api };
+  const ctx = { api, getSelectedAgent: () => null };
   let definition = null;
   install({ register: (next) => { definition = next; } });
   definition.render(root, ctx);
@@ -103,153 +103,196 @@ const child = (extra = {}) => ({
   model: { provider: 'q', id: 'solo' }, models: [{ provider: 'q', id: 'solo', name: 'Solo' }], ...extra,
 });
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+const optionValues = (select) => select.options.map((option) => option.value);
+const optionPairs = (select) => select.options.map((option) => [option.value, option.label]);
+const change = (select) => select.dispatchEvent(new Event('change'));
 
-test('widget model registers the frozen descriptor', () => {
+test('widget model registers a 2x2 auto-applying descriptor', () => {
   const registered = [];
   install({ register: (definition) => registered.push(definition) });
   assert.equal(registered.length, 1);
   const [definition] = registered;
   assert.equal(definition.type, 'model');
   assert.equal(definition.title, 'Model & reasoning');
-  assert.deepEqual(definition.defaultSize, [2, 3]);
-  assert.deepEqual(definition.sizes, [[2, 2], [2, 3]]);
+  assert.deepEqual(definition.defaultSize, [2, 2]);
+  assert.deepEqual(definition.sizes, [[2, 2]]);
   for (const method of ['render', 'update', 'destroy']) assert.equal(typeof definition[method], 'function', method);
 });
 
-test('widget model selects reflect reported state and never invent options', (t) => {
+test('widget model renders three fields for the selected agent with no agent picker or apply buttons', (t) => {
   const f = fixture(); t.after(f.finish);
-  f.definition.update({ connected: true, agents: [main(), child()] }, f.ctx);
-  const optionValues = (select) => select.options.map((option) => option.value);
-  const optionLabels = (select) => select.options.map((option) => option.label);
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
 
-  assert.deepEqual(optionValues(f.el('model-agent')), ['main', 'child']);
-  assert.deepEqual(optionLabels(f.el('model-agent')), ['Main', 'Child']);
-  assert.equal(f.el('model-agent').value, 'main');
+  assert.deepEqual([f.el('model-provider'), f.el('model-model'), f.el('model-thinking')].map((select) => select?.tagName), ['SELECT', 'SELECT', 'SELECT']);
+  assert.equal(f.el('model-agent'), null, 'the agent select is gone');
+  assert.equal(f.el('model-apply'), null, 'the model apply button is gone');
+  assert.equal(f.el('model-thinking-apply'), null, 'the thinking apply button is gone');
+
   assert.deepEqual(optionValues(f.el('model-provider')), ['p']);
-  assert.deepEqual(optionValues(f.el('model-model')), ['one', 'two']);
+  assert.deepEqual(optionPairs(f.el('model-model')), [['one', 'One'], ['two', 'Two']]);
   assert.deepEqual(optionValues(f.el('model-thinking')), ['off', 'high']);
-  assert.equal(f.el('model-model').value, 'one');
-  assert.equal(f.el('model-thinking').value, 'off');
-  assert.match(f.el('model-current').textContent, /Main · idle · Current: p \/ one · Thinking: off/);
+  assert.equal(f.el('model-model').value, 'one', 'the select starts on the agent model');
+  assert.equal(f.el('model-thinking').value, 'off', 'the select starts on the reported level');
+});
 
-  // Selecting another agent swaps every choice to that agent's reported catalog.
-  const agentSelect = f.el('model-agent');
-  agentSelect.value = 'child'; agentSelect.dispatchEvent(new Event('change'));
-  assert.deepEqual(optionValues(f.el('model-provider')), ['q']);
+test('widget model follows ctx.getSelectedAgent and falls back to main then first', (t) => {
+  const f = fixture(); t.after(f.finish);
+  const agent = main(), kid = child();
+  f.definition.update({ connected: true, agents: [agent, kid] }, f.ctx);
+  // No selected agent: the widget mirrors main.
+  assert.equal(f.el('model-provider').value, 'p');
+  assert.deepEqual(optionValues(f.el('model-model')), ['one', 'two']);
+
+  f.ctx.getSelectedAgent = () => kid;
+  f.definition.update({ connected: true, agents: [agent, kid] }, f.ctx);
+  assert.equal(f.el('model-provider').value, 'q');
   assert.deepEqual(optionValues(f.el('model-model')), ['solo']);
   assert.deepEqual(optionValues(f.el('model-thinking')), ['low']);
-  assert.equal(f.el('model-model').value, 'solo');
-  assert.match(f.el('model-current').textContent, /Child · idle · Current: q \/ solo · Thinking: low/);
+
+  // A selected agent missing from the sanitized list is still honored.
+  const outside = { ...kid, id: 'external', model: { provider: 'q', id: 'solo' } };
+  f.ctx.getSelectedAgent = () => outside;
+  f.definition.update({ connected: true, agents: [agent, kid] }, f.ctx);
+  assert.equal(f.el('model-provider').value, 'q');
 });
 
-test('widget model shows unavailable placeholders instead of guessing', (t) => {
+test('widget model shows unavailable placeholders for an empty catalog', (t) => {
   const f = fixture(); t.after(f.finish);
-  f.definition.update({ connected: true, agents: [main({ model: null, models: [], levels: undefined, thinking: undefined })] }, f.ctx);
-  assert.deepEqual(f.el('model-provider').options.map((option) => [option.value, option.label]), [['', 'No providers']]);
-  assert.deepEqual(f.el('model-model').options.map((option) => [option.value, option.label]), [['', 'No model available']]);
-  assert.equal(f.el('model-thinking').options.length, 0);
-  assert.match(f.el('model-current').textContent, /Current: Unknown · Thinking: Unknown/);
-  for (const testid of ['model-apply', 'model-thinking-apply']) assert.equal(f.el(testid).disabled, true, testid);
+  const bare = main({ model: null, models: [], levels: undefined, thinking: undefined });
+  f.ctx.getSelectedAgent = () => bare;
+  f.definition.update({ connected: true, agents: [bare] }, f.ctx);
+  assert.deepEqual(optionPairs(f.el('model-provider')), [['', 'No providers']]);
+  assert.deepEqual(optionPairs(f.el('model-model')), [['', 'No model available']]);
+  assert.equal(optionValues(f.el('model-thinking')).length, 0);
+  assert.equal(f.el('model-thinking').disabled, true, 'no reported levels disables the reasoning select');
 
+  f.ctx.getSelectedAgent = () => null;
   f.definition.update({ connected: true, agents: [] }, f.ctx);
-  assert.deepEqual(f.el('model-agent').options.map((option) => [option.value, option.label]), [['', 'No agents']]);
-  assert.deepEqual(f.el('model-provider').options.map((option) => [option.value, option.label]), [['', 'No providers']]);
-  assert.deepEqual(f.el('model-model').options.map((option) => [option.value, option.label]), [['', 'No model available']]);
-  assert.equal(f.el('model-current').textContent, 'No agents.');
-  assert.equal(f.el('model-apply').disabled, true);
+  assert.deepEqual(optionPairs(f.el('model-provider')), [['', 'No providers']]);
+  assert.deepEqual(optionPairs(f.el('model-model')), [['', 'No model available']]);
 });
 
-test('widget model preserves a draft until the agent\'s authoritative state changes', (t) => {
+test('widget model auto-applies the model and reasoning selects through ctx.api', async (t) => {
   const f = fixture(); t.after(f.finish);
-  f.definition.update({ connected: true, agents: [main()] }, f.ctx);
-  f.el('model-model').value = 'two';
-  f.definition.update({ connected: true, agents: [main({ phase: 'idle' })] }, f.ctx);
-  assert.equal(f.el('model-model').value, 'two', 'unrelated updates keep the draft');
-  f.el('model-thinking').value = 'high';
-  f.definition.update({ connected: true, agents: [main({ thinking: 'high' })] }, f.ctx);
-  assert.equal(f.el('model-thinking').value, 'high', 'reported state selects the runtime value');
-});
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
 
-test('widget model applies model and thinking through ctx.api with exact bodies', async (t) => {
-  const f = fixture(); t.after(f.finish);
-  f.definition.update({ connected: true, agents: [main()] }, f.ctx);
-  f.el('model-model').value = 'two'; f.el('model-thinking').value = 'high';
-
-  f.el('model-apply').click(); await tick();
+  const modelSelect = f.el('model-model');
+  modelSelect.value = 'two'; change(modelSelect); await tick();
   assert.deepEqual(f.calls.at(-1), { path: '/api/agents/main/model', body: { provider: 'p', modelId: 'two' } });
-  f.el('model-thinking-apply').click(); await tick();
-  assert.deepEqual(f.calls.at(-1), { path: '/api/agents/main/thinking', body: { level: 'high' } });
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.el('model-status').textContent, 'Applied.');
-  assert.equal(f.el('model-apply').disabled, false, 'controls return after the request');
 
-  // A double submit while a request is in flight sends exactly one write.
-  f.definition.update({ connected: true, agents: [child()] }, f.ctx);
-  f.el('model-apply').click(); f.el('model-apply').click(); await tick();
-  assert.equal(f.calls.length, 3);
+  const thinkingSelect = f.el('model-thinking');
+  thinkingSelect.value = 'high'; change(thinkingSelect); await tick();
+  assert.deepEqual(f.calls.at(-1), { path: '/api/agents/main/thinking', body: { level: 'high' } });
+
+  assert.equal(f.calls.length, 2, 'each change sends exactly one write');
+  assert.equal(f.el('model-status').textContent, 'Applied.');
+  assert.equal(modelSelect.disabled, false, 'controls return after the request');
 });
 
-test('widget model keeps errors generic and guards every idle condition', async (t) => {
+test('widget model re-derives models on a provider switch before applying', async (t) => {
   const f = fixture(); t.after(f.finish);
-  const fail = { api: async () => { throw new Error('secret provider detail'); } };
-  f.definition.update({ connected: true, agents: [main()] }, fail);
-  f.el('model-apply').click(); await tick();
+  const agent = main({ models: [
+    { provider: 'p', id: 'one', name: 'One' },
+    { provider: 'q', id: 'solo', name: 'Solo' },
+  ], model: { provider: 'p', id: 'one' } });
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
+
+  const providerSelect = f.el('model-provider');
+  assert.deepEqual(optionValues(providerSelect), ['p', 'q']);
+  providerSelect.value = 'q'; change(providerSelect); await tick();
+  assert.deepEqual(optionValues(f.el('model-model')), ['solo'], 'the model list re-derives for the new provider');
+  assert.equal(f.el('model-model').value, 'solo');
+  assert.deepEqual(f.calls.at(-1), { path: '/api/agents/main/model', body: { provider: 'q', modelId: 'solo' } });
+});
+
+test('widget model serializes one in-flight write and applies the newest change next', async (t) => {
+  const f = fixture(); t.after(f.finish);
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
+
+  const modelSelect = f.el('model-model'), thinkingSelect = f.el('model-thinking');
+  modelSelect.value = 'two'; change(modelSelect);
+  assert.equal(f.calls.length, 1, 'the first change is already in flight');
+  thinkingSelect.value = 'high'; change(thinkingSelect);
+  assert.equal(f.calls.length, 1, 'a second change waits for the in-flight write');
+  await tick();
+  assert.equal(f.calls.length, 2, 'the queued change runs after');
+  assert.deepEqual(f.calls[0], { path: '/api/agents/main/model', body: { provider: 'p', modelId: 'two' } });
+  assert.deepEqual(f.calls[1], { path: '/api/agents/main/thinking', body: { level: 'high' } });
+});
+
+test('widget model keeps a failed write generic and guards every idle condition', async (t) => {
+  const f = fixture(); t.after(f.finish);
+  const fail = { ...f.ctx, api: async () => { throw new Error('secret provider detail'); } };
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, fail);
+  const modelSelect = f.el('model-model');
+  modelSelect.value = 'two'; change(modelSelect); await tick();
   assert.equal(f.el('model-status').textContent, 'Update failed.');
   assert.doesNotMatch(f.root.textContent, /secret provider detail/);
 
-  const setPhase = (extra) => f.definition.update({ connected: true, agents: [main(extra)] }, f.ctx);
+  const apply = (selected = agent) => {
+    f.ctx.getSelectedAgent = () => selected;
+    f.definition.update({ connected: true, agents: [selected] }, f.ctx);
+  };
   for (const [label, state] of [
     ['running', { phase: 'running' }],
     ['steering queued', { queue: { steering: ['x'] } }],
     ['follow-up queued', { queue: { followUp: ['y'] } }],
     ['agent offline', { connected: false }],
   ]) {
-    setPhase(state);
-    assert.equal(f.el('model-apply').disabled, true, label);
-    assert.equal(f.el('model-thinking-apply').disabled, true, label);
-    assert.equal(f.el('model-provider').disabled, true, label);
-    assert.equal(f.el('model-model').disabled, true, label);
-    assert.equal(f.el('model-thinking').disabled, true, label);
+    apply(main(state));
+    for (const testid of ['model-provider', 'model-model', 'model-thinking']) assert.equal(f.el(testid).disabled, true, `${testid} disabled when ${label}`);
   }
-  f.definition.update({ connected: false, agents: [main()] }, f.ctx);
-  assert.equal(f.el('model-apply').disabled, true, 'disconnected desktop disables Apply');
-  setPhase({});
-  assert.equal(f.el('model-apply').disabled, false, 'idle agent re-enables Apply');
-  assert.equal(f.el('model-thinking').disabled, false, 'reported thinking level keeps its control usable');
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: false, agents: [agent] }, f.ctx);
+  assert.equal(f.el('model-provider').disabled, true, 'a disconnected desktop disables the selects');
+  apply(main());
+  assert.equal(f.el('model-provider').disabled, false, 'an idle agent re-enables the selects');
+  assert.equal(f.el('model-thinking').disabled, false, 'a reported level keeps its control usable');
 });
 
 test('widget model encodes the selected agent id in both endpoints', async (t) => {
   const f = fixture(); t.after(f.finish);
   const agent = { ...main(), id: 'team/one' };
+  f.ctx.getSelectedAgent = () => agent;
   f.definition.update({ connected: true, agents: [agent] }, f.ctx);
-  f.el('model-thinking').value = 'high';
-  f.el('model-thinking-apply').click(); await tick();
+  const thinkingSelect = f.el('model-thinking');
+  thinkingSelect.value = 'high'; change(thinkingSelect); await tick();
   assert.deepEqual(f.calls.at(-1), { path: '/api/agents/team%2Fone/thinking', body: { level: 'high' } });
 });
 
 test('widget model keeps the retro comboboxes in sync after state changes', (t) => {
   const f = fixture(); t.after(f.finish);
-  f.definition.update({ connected: true, agents: [main(), child()] }, f.ctx);
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
   const comboboxes = installComboboxes(f.root.ownerDocument.body);
   t.after(() => comboboxes.destroy());
-  const agentSelect = f.el('model-agent');
-  const triggerText = () => agentSelect.nextElementSibling.querySelector('.pi-combobox-text').textContent;
-  assert.equal(agentSelect.classList.contains('pi-combobox-native'), true, 'the widget selects are enhanced');
-  assert.equal(triggerText(), 'Main');
+  const providerSelect = f.el('model-provider');
+  const triggerText = () => providerSelect.nextElementSibling.querySelector('.pi-combobox-text').textContent;
+  assert.equal(providerSelect.classList.contains('pi-combobox-native'), true, 'the widget selects are enhanced');
+  assert.equal(triggerText(), 'p');
 
-  agentSelect.value = 'child'; agentSelect.dispatchEvent(new Event('change'));
-  assert.equal(triggerText(), 'Child');
-
-  // Removing the selected agent leaves no explicit value assignment, so only the widget's
-  // explicit syncCombobox call can refresh the enhanced trigger text.
-  f.definition.update({ connected: true, agents: [main({ name: 'Main renamed' })] }, f.ctx);
-  assert.equal(agentSelect.value, 'main');
-  assert.equal(triggerText(), 'Main renamed');
+  const kid = child();
+  f.ctx.getSelectedAgent = () => kid;
+  f.definition.update({ connected: true, agents: [agent, kid] }, f.ctx);
+  assert.equal(providerSelect.value, 'q');
+  assert.equal(triggerText(), 'q', 'the enhanced trigger follows the selected agent');
 });
 
 test('widget model destroy stops updates and releases the root', (t) => {
   const f = fixture();
-  f.definition.update({ connected: true, agents: [main()] }, f.ctx);
+  const agent = main();
+  f.ctx.getSelectedAgent = () => agent;
+  f.definition.update({ connected: true, agents: [agent] }, f.ctx);
   f.definition.destroy();
   assert.equal(f.root.children.length, 0);
   f.definition.update({ connected: true, agents: [child()] }, f.ctx);

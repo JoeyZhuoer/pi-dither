@@ -58,8 +58,8 @@ test('usage diagram renders safe accessible telemetry, separate turn totals and 
   const previous = globalThis.document;
   globalThis.document = { createElement: (tag) => new Element(tag) };
   t.after(() => { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; });
-  const root = new Element('aside'); let opens = 0;
-  const view = installUsageDiagram(root, () => opens++);
+  const root = new Element('aside');
+  const view = installUsageDiagram(root);
   const agent = { id: 'main', name: '<img src=x onerror=bad()>', connected: true, phase: 'idle', stats: { tokens: { input: 200, output: 50, cacheRead: 80, cacheWrite: 20, total: 350 }, cost: .0123, contextUsage: { percent: 25, tokens: 500, contextWindow: 2000 } } };
   view.update(agent, true);
   assert.equal(root.dataset.agentId, 'main'); assert.equal(root.dataset.stale, 'false');
@@ -68,10 +68,10 @@ test('usage diagram renders safe accessible telemetry, separate turn totals and 
   assert.equal(root.querySelector('.usage-context').attributes['aria-valuenow'], '25');
   assert.match(root.querySelector('.usage-bars').attributes['aria-label'], /CACHE: 100 tokens/);
   agent.phase = 'running'; agent.currentUsage = { totalTokens: 42 }; view.update(agent, true);
-  assert.match(root.querySelector('.usage-note').textContent, /42 TOK \u00b7 PROVISIONAL/);
   assert.match(root.querySelector('.usage-totals').textContent, /350 TOK/);
-  view.update(agent, false); assert.equal(root.dataset.stale, 'true'); assert.match(root.textContent, /OFFLINE/);
-  root.querySelector('button').click(); assert.equal(opens, 1);
+  view.update(agent, false); assert.equal(root.dataset.stale, 'true');
+  assert.equal(root.querySelector('.usage-note'), null, 'no connection note remains');
+  assert.equal(root.querySelector('button'), null, 'no link remains');
   agent.stats = null; view.update(agent, true);
   assert.equal(root.querySelector('.usage-context').attributes['aria-valuenow'], undefined);
   assert.equal(root.querySelector('.usage-context').querySelector('.usage-fill').style.width, '0%');

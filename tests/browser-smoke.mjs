@@ -399,11 +399,7 @@ try {
     return railCss.slice(start, index + 1);
   })();
   assert.match(narrowBlock, /#widget-layer\{position:relative/, 'the rail becomes static on mobile');
-  const chartHeading = await evaluate(`(()=>{const e=document.querySelector('[data-testid="widget-usage"] button'),r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,reachable:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('[data-testid="widget-usage"]')!==null}})()`);
-  assert.equal(chartHeading.reachable, true, 'chart heading is not blocked by the desktop or default windows');
-  for (const type of ['mousePressed', 'mouseReleased']) await rpc('Input.dispatchMouseEvent', { type, x: chartHeading.x, y: chartHeading.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
-  await until('document.querySelector("[data-window-id=usage]").hidden === false');
-  await evaluate(`document.querySelector('[data-window-id=usage] button[aria-label="Close utility window"]').click()`);
+  assert.equal(await evaluate(`document.querySelectorAll('[data-testid="widget-usage"] button').length`), 0, 'the usage widget has no link to the Usage window');
   // The initial main opens at the minimum width and a medium height, without
   // any sizing control, and follows the viewport height.
   assert.equal(await evaluate('document.querySelector("#auto-size, [aria-label=\\"Zoom to working size\\"]")'), null);
@@ -633,6 +629,8 @@ try {
   assert.equal(await evaluate('document.querySelector("#widgets")?.getAttribute("aria-haspopup")'), 'dialog');
   assert.equal(await evaluate('document.querySelector("#widget-layer") !== null'), true, 'the widget layer exists');
   assert.equal(await evaluate('document.querySelector(".widget-clock #clock")?.textContent.length > 0'), true, 'the built-in clock renders in the layer');
+  assert.equal(await evaluate('document.querySelector(".widget-clock").style.height'), '76px', 'the clock widget is one row tall (2x1)');
+  assert.equal(await evaluate('document.querySelector(".widget-clock").style.top'), '0px', 'the clock defaults to the top cell');
   await evaluate('document.querySelector("#widgets").click()');
   await until('document.querySelector("#widget-manager")?.open === true');
   await evaluate(`{ const box = document.querySelector('[data-testid="widget-enable-clock"]'); box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }`);
@@ -640,6 +638,16 @@ try {
   assert.match(await evaluate('localStorage.getItem("pi-desktop:widgets:v1")'), /"type":"clock","enabled":false/, 'disabling persists in the widget store');
   await evaluate(`{ const box = document.querySelector('[data-testid="widget-enable-clock"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); }`);
   await until('document.querySelector(".widget-clock").hidden === false');
+  const clockCenter = await evaluate(`(() => { const body = document.querySelector('.widget-clock .widget-body'); const line = document.querySelector('.widget-clock .clock-line'); const bodyRect = body.getBoundingClientRect(), lineRect = line.getBoundingClientRect(); return { vertical: Math.round(Math.abs((lineRect.top + lineRect.height / 2) - (bodyRect.top + bodyRect.height / 2))), justify: getComputedStyle(line).justifyContent }; })()`);
+  assert.ok(clockCenter.vertical <= 2, `the clock line is vertically centred (off by ${clockCenter.vertical}px)`);
+  assert.equal(clockCenter.justify, 'space-between', 'the clock keeps its time-left/date-right layout');
+  // The usage widget drops the connection note and shows the token trend only at 2x3.
+  assert.equal(await evaluate('document.querySelector("[data-testid=widget-usage] .usage-note")'), null, 'the usage widget has no connection note');
+  assert.equal(await evaluate('!!document.querySelector("[data-testid=widget-usage] canvas.usage-chart")'), true, 'the usage widget renders the token chart canvas');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("[data-testid=widget-usage] .usage-chart")).display !== "none"'), true, 'the token chart shows at 2x3');
+  const fill3 = await evaluate(`(() => { const frame = document.querySelector('[data-testid="widget-usage"]'); const chart = frame.querySelector('.usage-chart'); return { gap: Math.round(frame.getBoundingClientRect().bottom - chart.getBoundingClientRect().bottom), height: Math.round(chart.getBoundingClientRect().height) }; })()`);
+  assert.ok(fill3.gap <= 12, `the 2x3 chart fills the rail (gap ${fill3.gap})`);
+  assert.ok(fill3.height > 52, `the 2x3 chart grows past its minimum (${fill3.height}px)`);
   // The size control is a themed combobox inside the modal manager: its list must
   // render in the dialog's top layer instead of behind the backdrop.
   await evaluate(`document.querySelector('[data-testid="widget-size-usage"]').nextElementSibling.click()`);
@@ -648,6 +656,9 @@ try {
   assert.equal(sizeList.hit, true, 'the size list renders above the modal dialog');
   await evaluate(`{ const select = document.querySelector('[data-testid="widget-size-usage"]'); const list = document.getElementById(select.nextElementSibling.getAttribute('aria-controls')); list.querySelectorAll('.pi-combobox-option')[0].click(); }`);
   assert.equal(await evaluate('document.querySelector(".widget-usage").style.height'), '158px', 'the usage widget resizes to 2x2');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("[data-testid=widget-usage] .usage-chart")).display'), 'none', 'the token chart hides at 2x2');
+  const fill2 = await evaluate(`(() => { const frame = document.querySelector('[data-testid="widget-usage"]'); const last = frame.querySelector('.usage-context-row'); return Math.round(frame.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom); })()`);
+  assert.ok(fill2 <= 12, `the 2x2 usage body fills its height (gap ${fill2})`);
   // Dragging the clock down pushes the usage widget into the next free row.
   const widgetTop = () => evaluate('document.querySelector(".widget-clock").style.top');
   const usageTop = () => evaluate('document.querySelector(".widget-usage").style.top');
@@ -660,13 +671,75 @@ try {
     document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y + 82 }));
   })()`);
   assert.equal(await widgetTop(), '82px', 'a synthetic pointer drag moves the clock one row');
-  assert.equal(await usageTop(), '246px', 'the overlapped usage widget is pushed clear');
+  assert.equal(await usageTop(), '164px', 'the overlapped usage widget is pushed clear');
   const storedClockY = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:widgets:v1")).items.find((item) => item.type === "clock").y');
   const storedUsageY = await evaluate('JSON.parse(localStorage.getItem("pi-desktop:widgets:v1")).items.find((item) => item.type === "usage").y');
-  assert.deepEqual([storedClockY, storedUsageY], [1, 3], 'the drop and the push are persisted');
+  assert.deepEqual([storedClockY, storedUsageY], [1, 2], 'the drop and the push are persisted');
   await evaluate('document.querySelector("#widget-manager button.widgets-reset").click()');
   assert.equal(await widgetTop(), '0px', 'Reset widgets restores the clock cell');
-  assert.equal(await usageTop(), '164px', 'Reset widgets restores the usage cell');
+  assert.equal(await usageTop(), '82px', 'Reset widgets restores the usage cell');
+  // Model & reasoning widget: a 2x2 three-select control that applies each change
+  // immediately, with no agent picker and no apply buttons.
+  await evaluate(`{ const box = document.querySelector('[data-testid="widget-enable-model"]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); }`);
+  await until('document.querySelector(".widget-model").hidden === false');
+  await evaluate(`{ const select = document.querySelector('[data-testid="widget-size-model"]'); select.value = '2x2'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+  const modelRail = await evaluate(`(() => {
+    const widget = document.querySelector('.widget-model');
+    return {
+      width: widget.style.width, height: widget.style.height,
+      selects: widget.querySelectorAll('select').length,
+      agentPicker: document.querySelector('[data-testid="model-agent"]') !== null,
+      applyButtons: document.querySelectorAll('[data-testid="model-apply"], [data-testid="model-thinking-apply"]').length,
+      fits: widget.scrollHeight <= widget.clientHeight,
+      spacing: getComputedStyle(widget.querySelector('.widget-model-form')).justifyContent,
+    };
+  })()`);
+  assert.equal(modelRail.width, '258px', 'the model widget spans both columns');
+  assert.equal(modelRail.height, '158px', 'the model widget is a 2x2 cell');
+  assert.equal(modelRail.selects, 3, 'the model widget keeps provider, model and reasoning selects');
+  assert.equal(modelRail.agentPicker, false, 'the model widget has no independent agent picker');
+  assert.equal(modelRail.applyButtons, 0, 'the model widget has no apply buttons');
+  assert.equal(modelRail.fits, true, 'three rows and the status line fit inside the 2x2 body without clipping');
+  assert.equal(modelRail.spacing, 'space-evenly', 'the three model options are evenly spaced');
+  const modelFonts = await evaluate(`(() => {
+    const model = document.querySelector('[data-testid="widget-model"]');
+    const usage = document.querySelector('[data-testid="widget-usage"]');
+    const combo = model.querySelector('.pi-combobox');
+    return {
+      usage: getComputedStyle(usage.querySelector('.usage-agent')).fontFamily,
+      label: getComputedStyle(model.querySelector('.widget-field span')).fontFamily,
+      combo: getComputedStyle(combo).fontFamily,
+      labelSize: getComputedStyle(model.querySelector('.widget-field span')).fontSize,
+      comboSize: getComputedStyle(combo).fontSize,
+    };
+  })()`);
+  assert.equal(modelFonts.label, modelFonts.usage, 'model labels use the usage font');
+  assert.equal(modelFonts.combo, modelFonts.usage, 'model selects use the usage font');
+  assert.equal(modelFonts.labelSize, '14px', 'model labels match the usage row size');
+  assert.equal(modelFonts.comboSize, '16px', 'model selects match the usage label size');
+  const modelFill = await evaluate(`(() => { const frame = document.querySelector('[data-testid="widget-model"]'); const rows = [...frame.querySelectorAll('.widget-field')].map((row) => row.getBoundingClientRect()); const form = frame.querySelector('.widget-model-form').getBoundingClientRect(); const gaps = [Math.round(rows[0].top - form.top), Math.round(rows[1].top - rows[0].bottom), Math.round(rows[2].top - rows[1].bottom), Math.round(form.bottom - rows[2].bottom)]; return { gaps, bottom: Math.round(frame.getBoundingClientRect().bottom - frame.querySelector('.widget-model-status').getBoundingClientRect().bottom) }; })()`);
+  assert.ok(Math.max(...modelFill.gaps) - Math.min(...modelFill.gaps) <= 2, `the three rows are equidistant (${modelFill.gaps.join('/')})`);
+  assert.ok(modelFill.bottom <= 12, `the model widget fills its cell (bottom gap ${modelFill.bottom})`);
+  if (app) {
+    const main = app.sessions.get('main'), applied = [];
+    const act = main.act.bind(main);
+    main.act = async (action, input) => { applied.push({ action, input }); return act(action, input); };
+    main.state.models = [...main.state.models, { provider: 'test', id: 'alt', name: 'Alternate fixture' }];
+    main.state.levels = ['off', 'high'];
+    main.emit('change');
+    await until("document.querySelector('[data-testid=model-model] option[value=alt]') !== null");
+    await evaluate(`{ const select = document.querySelector('[data-testid=model-model]'); select.value = 'alt'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    for (let attempt = 0; attempt < 100 && !applied.some((entry) => entry.action === 'model'); attempt++) await new Promise((done) => setTimeout(done, 50));
+    const modelCall = applied.find((entry) => entry.action === 'model');
+    assert.deepEqual({ provider: modelCall?.input.provider, modelId: modelCall?.input.modelId }, { provider: 'test', modelId: 'alt' }, 'changing the model applies it');
+    await until("document.querySelector('[data-testid=model-thinking] option[value=high]') !== null");
+    await evaluate(`{ const select = document.querySelector('[data-testid=model-thinking]'); select.value = 'high'; select.dispatchEvent(new Event('change', { bubbles: true })); }`);
+    for (let attempt = 0; attempt < 100 && !applied.some((entry) => entry.action === 'thinking'); attempt++) await new Promise((done) => setTimeout(done, 50));
+    const thinkingCall = applied.find((entry) => entry.action === 'thinking');
+    assert.deepEqual({ level: thinkingCall?.input.level }, { level: 'high' }, 'changing the reasoning level applies it');
+    assert.equal(await evaluate("document.querySelector('[data-testid=model-status]').textContent"), 'Applied.', 'the widget reports the applied change');
+  }
+
   await evaluate('document.querySelector("#widget-manager").close()');
   assert.deepEqual(errors, [], 'no browser script, resource or CSP errors');
   console.log(`PASS: ${app ? 'fixture' : 'real Pi'} desktop, auth, rendering, drag, resize, minimize, ${app ? 'launch, tool selection, reusable subagent numbers, automatic delegated windows/live output, manual/delegated inspection, retro combobox keyboard/popup, safe text, handoff, ' : ''}Tools replacing Window Manager, appearance colours, photo point cloud, particle field, in-window reasoning, fleet activity, purpose-specific presets, usage chart, minimum-width opening, hide/show/reload layout memory, mobile layout`);

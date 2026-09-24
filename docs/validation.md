@@ -1,6 +1,14 @@
 # Pi Dither validation
 
-Target: Pi Dither 0.5.0, core Pi (0.85.1/0.87.1 tested), pi-subagents 0.69.0, Apple Silicon/macOS. This is not certification of every Pi feature, platform or terminal.
+Target: Pi Dither 0.6.0, core Pi (0.85.1/0.87.1 tested), pi-subagents 0.69.0, Apple Silicon/macOS. This is not certification of every Pi feature, platform or terminal.
+
+## Desktop widget system (v0.6.0)
+
+The top-right **Widgets** button replaced the window **Arrange** control. Widgets live on a fixed two-column cell grid (126×76 px + 6 px gap; sizes 1×1 … 2×3) persisted in `pi-desktop:widgets:v1`; they drag with push-overlap and Escape restore, resize from the manager, and enable/disable without losing geometry. The clock is 2×1 and vertically centred; the usage widget keeps IN/OUT/CACHE, totals and context at 2×2 and adds a **per-user-turn** time×token line chart at 2×3 (x = user turn, y = that turn's reported token delta, gaps for unknown totals, 40-turn cap); the model & reasoning widget is a 2×2 Provider/Model/Reasoning control that applies each change immediately for the focused agent. Widget typography is unified across the rail, and the combobox dropdowns render above the modal manager. Window auto-arrange (`windows.arrange()`) is gone; compact presets remain opening/migration anchors.
+
+Also in 0.6.0: the main conversation keeps the complete history and adds Cmd/Ctrl+F search, every window kind shares the 360×320 floor, empty feature-shell rows collapse, the Appearance motion status line and the Models refresh button were removed, Pi Dither sessions are no longer pre-named "Main agent" (existing sessions were migrated with parent-chain repair and backups; the `pi` CLI now falls back to the first user message), and the IMU bridge from 0.5.0 is unchanged.
+
+Gates: **178/178** Node/real-DOM checks, the integrated Chromium fixture, isolated WKWebView at 390/1440 px, four terminal PTY scenarios and the native AppKit/WKWebView smoke all pass.
 
 ## Native-only Pi runtime and the global session store (v0.5.0)
 

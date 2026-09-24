@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setMaxListeners } from 'node:events';
-import { install } from '../desktop/public/widget-usage.js';
+import { createUsageChart, install } from '../desktop/public/widget-usage.js';
 
 // Small DOM fixture for deterministic widget tests without browser dependencies,
 // matching the shim used by tests/features.test.mjs.
@@ -64,23 +64,25 @@ test('usage widget registers the frozen host interface', (t) => {
   assert.deepEqual(spec.defaultSize, [2, 3]);
   assert.deepEqual(spec.sizes, [[2, 2], [2, 3]]);
   for (const method of ['render', 'update', 'destroy']) assert.equal(typeof spec[method], 'function', `${method} is a function`);
-  // The real usage-widget contract: the heading opens the Usage window and the
-  // context supplies the selected agent. No state is fabricated before update.
+  // The widget has no link to the Usage window; the host titlebar is the only heading.
   spec.render(root, ctx);
-  root.querySelector('.utility-title').click();
-  assert.equal(opens.count, 1);
+  assert.equal(root.querySelector('.utility-title'), null, 'no heading link is rendered');
 });
 
-test('render draws the utility title and the usage bars into the owned root', (t) => {
+test('render draws the utility title, usage bars and the hidden token chart', (t) => {
   const { registrations, root, ctx } = setup(t);
   const spec = registrations[0];
   spec.render(root, ctx);
-  assert.match(root.querySelector('.utility-title').textContent, /^Usage \/ session/);
+  assert.equal(root.querySelector('.utility-title'), null, 'no duplicate heading is rendered');
   assert.equal(root.querySelectorAll('.usage-bar').length, 3, 'three token bars render');
   assert.ok(root.querySelector('.usage-bars'), 'the bar group is present');
   assert.ok(root.querySelector('.usage-totals'), 'the totals line is present');
   assert.ok(root.querySelector('.usage-context'), 'the context meter is present');
-  assert.ok(root.querySelector('.usage-note'), 'the note line is present');
+  assert.equal(root.querySelector('.usage-note'), null, 'the connection/status note is gone');
+  const chart = root.querySelector('[data-testid="usage-chart"]');
+  assert.ok(chart, 'the token chart canvas renders');
+  assert.equal(chart.tagName, 'CANVAS');
+  assert.equal(chart.style.display, 'none', 'the chart stays hidden until a 2x3 size is reported');
 });
 
 test('update renders the selected agent reported by ctx.getSelectedAgent', (t) => {
@@ -94,6 +96,54 @@ test('update renders the selected agent reported by ctx.getSelectedAgent', (t) =
   assert.equal(root.dataset.stale, 'false');
   assert.match(root.querySelector('.usage-agent').textContent, /Child/);
   assert.match(root.querySelector('.usage-totals').textContent, /120 TOK\$0\.5000/);
+});
+
+test('the token chart shows only at 2x3 and follows ctx.size changes', (t) => {
+  const { registrations, root, ctx } = setup(t);
+  const spec = registrations[0];
+  spec.render(root, ctx);
+  const chart = () => root.querySelector('[data-testid="usage-chart"]');
+  ctx.size = { w: 2, h: 2 };
+  spec.update({ connected: true, agents: [agent()] }, ctx);
+  assert.equal(chart().style.display, 'none', 'the chart hides at 2x2');
+  ctx.size = { w: 2, h: 3 };
+  spec.update({ connected: true, agents: [agent()] }, ctx);
+  assert.equal(chart().style.display, 'block', 'the chart shows at 2x3');
+  ctx.size = { w: 2, h: 2 };
+  spec.update({ connected: true, agents: [agent()] }, ctx);
+  assert.equal(chart().style.display, 'none', 'the chart hides again after a resize back to 2x2');
+});
+
+test('the token chart records one point per completed user turn, leaves gaps and resets per agent', (t) => {
+  const previous = globalThis.document;
+  globalThis.document = { createElement: (tag) => new Element(tag) };
+  t.after(() => { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; });
+  const chart = createUsageChart();
+  // No completed turn yet: the baseline is adopted without a fabricated point.
+  chart.update(agent({ stats: { userMessages: 0, tokens: { total: 0 } } }), { w: 2, h: 3 });
+  assert.equal(chart.history.length, 0, 'an idle baseline records no turn');
+  // Turn 1: running, then idle with the reported cumulative total.
+  chart.update(agent({ phase: 'running', stats: { userMessages: 1, tokens: { total: 0 } } }), { w: 2, h: 3 });
+  assert.equal(chart.history.length, 0, 'a running turn is not charted yet');
+  chart.update(agent({ phase: 'idle', stats: { userMessages: 1, tokens: { total: 350 } } }), { w: 2, h: 3 });
+  assert.deepEqual(chart.history, [{ turn: 1, tokens: 350 }], 'turn 1 records its own token usage');
+  // Turn 2 stores the delta, not the cumulative session total.
+  chart.update(agent({ phase: 'running', stats: { userMessages: 2, tokens: { total: 350 } } }), { w: 2, h: 3 });
+  chart.update(agent({ phase: 'idle', stats: { userMessages: 2, tokens: { total: 500 } } }), { w: 2, h: 3 });
+  assert.deepEqual(chart.history[1], { turn: 2, tokens: 150 }, 'turn 2 stores the turn delta');
+  // Unknown totals keep the turn as a gap instead of fabricating a value.
+  chart.update(agent({ phase: 'running', stats: { userMessages: 3, tokens: null } }), { w: 2, h: 3 });
+  chart.update(agent({ phase: 'idle', stats: { userMessages: 3, tokens: null } }), { w: 2, h: 3 });
+  assert.deepEqual(chart.history[2], { turn: 3, tokens: null }, 'an unknown turn total leaves a gap');
+  // Changing the selected agent resets the history.
+  chart.update(agent({ id: 'child', phase: 'idle', stats: { userMessages: 1, tokens: { total: 10 } } }), { w: 2, h: 3 });
+  assert.equal(chart.history.length, 0, 'changing the selected agent resets the history');
+  // The history is capped at 40 completed turns.
+  for (let i = 1; i <= 60; i++) {
+    chart.update(agent({ phase: 'running', stats: { userMessages: i, tokens: { total: i * 10 } } }), { w: 2, h: 3 });
+    chart.update(agent({ phase: 'idle', stats: { userMessages: i, tokens: { total: i * 10 } } }), { w: 2, h: 3 });
+  }
+  assert.equal(chart.history.length, 40, 'the history is capped at 40 turns');
 });
 
 test('update falls back to the main agent when the host offers no selection', (t) => {
@@ -112,27 +162,17 @@ test('update preserves provisional, offline and unavailable usage without fabric
   ctx.getSelectedAgent = () => running;
   spec.render(root, ctx);
   spec.update({ connected: true, agents: [running] }, ctx);
-  // The provisional turn count never overwrites the reported session totals.
-  assert.match(root.querySelector('.usage-note').textContent, /42 TOK \u00b7 PROVISIONAL/);
+  // The provisional turn count never overwrites the reported session totals, and
+  // no connection/status note is rendered at all.
+  assert.equal(root.querySelector('.usage-note'), null, 'no note line is rendered');
   assert.match(root.querySelector('.usage-totals').textContent, /350 TOK/);
   spec.update({ connected: false, agents: [running] }, ctx);
   assert.equal(root.dataset.stale, 'true');
-  assert.match(root.textContent, /OFFLINE/);
+  assert.doesNotMatch(root.textContent, /OFFLINE/);
   running.stats = null;
   spec.update({ connected: true, agents: [running] }, ctx);
   assert.match(root.querySelector('.usage-totals').textContent, /— TOK/);
   assert.equal(root.querySelector('.usage-context').attributes['aria-valuenow'], undefined, 'unknown context drops aria-valuenow');
-});
-
-test('clicking the heading calls ctx.openUsage', (t) => {
-  const { registrations, root, ctx, opens } = setup(t);
-  const spec = registrations[0];
-  spec.render(root, ctx);
-  const heading = root.querySelector('.utility-title');
-  assert.equal(heading.tagName, 'BUTTON');
-  heading.click();
-  heading.click();
-  assert.equal(opens.count, 2, 'every heading click opens the Usage window');
 });
 
 test('destroy releases the diagram DOM and makes update inert', (t) => {

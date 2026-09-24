@@ -8,7 +8,9 @@
 //     -> { register(definition), refresh(state), openManager(), dispose() }
 //   definition = { type, title, sizes = WIDGET_SIZES, defaultSize = [2,2],
 //                  render(root, ctx), update(state, ctx), destroy() }
-//   ctx = { api, getState, getSelectedAgent, openUsage, document, widgets }
+//   ctx = { api, getState, getSelectedAgent, openUsage, document, widgets, size: { w, h } }
+// `size` is the widget's own grid size (updated on every geometry change), so a widget
+// can reflow for its current cell.
 // `render` and `update` receive the widget's content element as `root`; the host draws
 // the frame and the .widget-titlebar. `getSelectedAgent()` returns the agent state the
 // rail should follow (last focused real agent window, else main).
@@ -29,9 +31,9 @@ const STORED_SIZE = /^(\d+)x(\d+)$/;
 // Default rail: clock on top, usage below it, model (disabled) last. Only applied for
 // a registered type that has no stored item; a stored item keeps its geometry.
 const DEFAULT_PLACEMENT = Object.freeze({
-  clock: { enabled: true, x: 0, y: 0, w: 2, h: 2 },
-  usage: { enabled: true, x: 0, y: 2, w: 2, h: 3 },
-  model: { enabled: false, x: 0, y: 5, w: 2, h: 3 },
+  clock: { enabled: true, x: 0, y: 0, w: 2, h: 1 },
+  usage: { enabled: true, x: 0, y: 1, w: 2, h: 3 },
+  model: { enabled: false, x: 0, y: 4, w: 2, h: 2 },
 });
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -76,22 +78,22 @@ function clockWidget() {
   let date = null, time = null, timer = null;
   const draw = () => {
     const now = new Date();
-    if (date) date.textContent = now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    if (date) date.textContent = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     if (time) { time.textContent = now.toLocaleTimeString('en-GB'); time.setAttribute?.('datetime', now.toISOString()); }
   };
   return {
     type: 'clock',
     title: 'Clock Tool 1.1',
-    sizes: [[2, 2]],
-    defaultSize: [2, 2],
+    sizes: [[2, 1]],
+    defaultSize: [2, 1],
     render(root, context) {
-      date = context.document.createElement('div'); date.id = 'date';
+      // A single line fits the 2x1 body (~40px below the titlebar): the time at
+      // display size, the date compact beside it.
       const line = context.document.createElement('div'); line.className = 'clock-line';
       time = context.document.createElement('time'); time.id = 'clock';
-      const mark = context.document.createElement('span');
-      mark.className = 'clock-mark'; mark.textContent = '▪ · ▪'; mark.setAttribute('aria-hidden', 'true');
-      line.append(time, mark);
-      root.append(date, line);
+      date = context.document.createElement('span'); date.id = 'date';
+      line.append(time, date);
+      root.append(line);
       draw();
       timer = setInterval(draw, 1000);
       timer?.unref?.();
@@ -135,8 +137,11 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
   manager.append(managerTitle, managerBody);
   root.append(manager);
 
-  const ctx = { api, getState, getSelectedAgent, openUsage, document: doc, widgets: null };
+  // Base context shared by every widget; each entry layers its own `widgets` host
+  // reference and its live `size` on top so a widget can key off its own geometry.
+  const baseCtx = { api, getState, getSelectedAgent, openUsage, document: doc };
   const host = { register, refresh, openManager, dispose };
+  let lastState = null;
 
   function blocked(rect, item) {
     return items.some((other) => other !== item && other.enabled && overlaps(rect, other));
@@ -164,6 +169,11 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
     entry.element.style.width = `${width}px`;
     entry.element.style.height = `${height}px`;
     entry.element.hidden = !entry.enabled;
+    if (entry.ctx) { entry.ctx.size.w = entry.w; entry.ctx.size.h = entry.h; }
+  }
+  /** Re-run a widget's update with the latest state so it can react to a geometry change. */
+  function notify(entry) {
+    definitions.get(entry.type)?.update?.(lastState, entry.ctx);
   }
   function persist() {
     const payload = { version: 1, items: items.map(({ type, enabled, x, y, w, h }) => ({ type, enabled, x, y, w, h })) };
@@ -272,7 +282,8 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
     widget.append(titlebar, body);
     layer.append(widget);
     entry.element = widget; entry.titlebar = titlebar; entry.body = body;
-    definition.render(body, ctx);
+    entry.ctx = { ...baseCtx, widgets: host, size: { w: entry.w, h: entry.h } };
+    definition.render(body, entry.ctx);
     titlebar.addEventListener('pointerdown', (event) => startDrag(entry, event));
     titlebar.addEventListener('keydown', (event) => arrowMove(entry, event));
     applyGeometry(entry);
@@ -282,6 +293,7 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
     else entry.enabled = false;
     applyGeometry(entry);
     persist();
+    notify(entry);
   }
   function setSize(entry, value) {
     const match = STORED_SIZE.exec(String(value));
@@ -298,6 +310,7 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
     entry.w = w; entry.h = h; entry.x = candidate.x; entry.y = candidate.y;
     applyGeometry(entry);
     persist();
+    notify(entry);
   }
   function managerRow(entry) {
     const definition = definitions.get(entry.type);
@@ -338,6 +351,7 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
     for (const entry of items) { if (entry.enabled) place(entry); applyGeometry(entry); }
     renderManager();
     persist();
+    for (const entry of items) notify(entry);
   }
   resetButton.addEventListener('click', resetAll);
 
@@ -367,7 +381,8 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
   }
   function refresh(state) {
     if (disposed) return host;
-    for (const entry of items) definitions.get(entry.type)?.update?.(state, ctx);
+    lastState = state;
+    for (const entry of items) definitions.get(entry.type)?.update?.(state, entry.ctx);
     return host;
   }
   function openManager() {
@@ -393,7 +408,6 @@ export function installWidgets({ root, storage, getState, getSelectedAgent, api,
   const widgetButton = typeof doc.getElementById === 'function' ? doc.getElementById('widgets') : null;
   widgetButton?.addEventListener?.('click', openManager);
 
-  ctx.widgets = host;
   register(clockWidget());
   // Optional sibling widgets register themselves. Their absence must not break the host,
   // so each import is independent and failures are swallowed until integration lands.

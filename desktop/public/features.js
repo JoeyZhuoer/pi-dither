@@ -56,10 +56,7 @@ export function usageDiagramData(agent) {
 }
 
 /** Desktop overview, updated from existing SSE state; no timers or requests. */
-export function installUsageDiagram(root, openUsage) {
-  const heading = node('button', 'Usage / session', 'utility-title');
-  heading.type = 'button'; heading.setAttribute('aria-label', 'Open detailed session usage');
-  heading.append(node('span', '↗')); heading.addEventListener('click', openUsage);
+export function installUsageDiagram(root) {
   const label = node('p', '', 'usage-agent'), bars = node('div', null, 'usage-bars');
   bars.setAttribute('role', 'img'); bars.title = 'Token counts';
   const rows = ['IN', 'OUT', 'CACHE'].map((text) => {
@@ -74,8 +71,7 @@ export function installUsageDiagram(root, openUsage) {
   context.setAttribute('role', 'progressbar'); context.setAttribute('aria-label', 'Context occupancy');
   context.setAttribute('aria-valuemin', '0'); context.setAttribute('aria-valuemax', '100');
   const contextRow = node('div', null, 'usage-context-row'); contextRow.append(contextLabel, context);
-  const note = node('p', '', 'usage-note');
-  root.replaceChildren(heading, label, bars, totals, contextRow, note);
+  root.replaceChildren(label, bars, totals, contextRow);
   const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
   const short = (value) => value === null ? '—' : compact.format(value);
   return {
@@ -95,9 +91,6 @@ export function installUsageDiagram(root, openUsage) {
       context.title = contextText; context.setAttribute('aria-valuetext', data.context === null ? `Occupancy unknown. ${contextText}` : `${number(data.context)}% used. ${contextText}`);
       contextFill.style.width = `${Math.min(100, data.context ?? 0)}%`;
       if (data.context === null) context.removeAttribute('aria-valuenow'); else context.setAttribute('aria-valuenow', String(Math.min(100, data.context)));
-      note.textContent = !online ? 'OFFLINE'
-        : !idle(agent) ? `ACTIVE / ${data.provisional === null ? 'TURN PENDING' : `${short(data.provisional)} TOK \u00b7 PROVISIONAL`}`
-          : 'REPORTED SESSION TOTALS';
     },
   };
 }

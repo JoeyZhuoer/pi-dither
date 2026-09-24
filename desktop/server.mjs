@@ -83,7 +83,7 @@ export async function createDesktop({ cwd = root, port = 4318, token = randomByt
     peer.write(`data: ${JSON.stringify(value)}\n\n`);
   };
   const publish = (value) => { for (const peer of peers) send(peer, value); };
-  const snapshot = () => ({ type: 'snapshot', contextId, cwd, desktopVersion: '0.5.0', version: host?.version ?? 'test', agents: [...sessions.values()].map((agent) => agent.state) });
+  const snapshot = () => ({ type: 'snapshot', contextId, cwd, desktopVersion: '0.6.0', version: host?.version ?? 'test', agents: [...sessions.values()].map((agent) => agent.state) });
   function attach(agent) {
     const id = agent.state.id;
     sessions.set(id, agent);

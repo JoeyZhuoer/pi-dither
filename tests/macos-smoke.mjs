@@ -27,7 +27,7 @@ try {
   execFileSync('/usr/bin/ditto', [app, relocated]);
   execFileSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', relocated]);
   const inventory = JSON.parse(await readFile(join(relocated, 'Contents/Resources/runtime-inventory.json'), 'utf8'));
-  assert.equal(inventory.application, '0.5.0');
+  assert.equal(inventory.application, '0.6.0');
   const sourceInventory = JSON.parse(await readFile(join(relocated, 'Contents/Resources/source-inventory.json'), 'utf8'));
   for (const required of ['desktop/public/windows.js', 'desktop/public/app.js', 'desktop/public/inspection.js', 'desktop/public/combobox.js', 'desktop/inspection.mjs']) {
     assert.ok(sourceInventory.files.some(file => file.path === required), `bundled feature missing: ${required}`);

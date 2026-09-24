@@ -99,7 +99,9 @@ const createRuntime = async ({ cwd, sessionManager, sessionStartEvent }) => {
 };
 const manager = config.sessionPath ? pi.SessionManager.open(config.sessionPath, config.sessionDir)
   : pi.SessionManager.create(process.cwd(), config.sessionDir);
-if (!config.sessionPath) manager.appendSessionInfo(config.name);
+// Do not pre-name the session after the agent (e.g. "Main agent"): the `pi` CLI
+// resume list then falls back to the first user message, which is meaningful.
+// Pi itself can still set a name later through setSessionName.
 const runtime = await pi.createAgentSessionRuntime(createRuntime, { cwd: process.cwd(), agentDir, sessionManager: manager });
 // Node IPC is separate from both the fd-3 credential bootstrap and core JSONL RPC.
 process.on('message', (message) => {

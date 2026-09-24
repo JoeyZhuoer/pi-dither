@@ -18,7 +18,7 @@ async function piDitherSmoke(stage) {
   if (stage === 'initial') {
     await document.fonts.ready;
     const s = await state(), a = s.agents[0];
-    check(s.agents.length === 1 && s.desktopVersion === '0.5.0' && a.kind === 'main' && a.connected && a.phase === 'idle' && a.messages.length === 0, 'idle sole main');
+    check(s.agents.length === 1 && s.desktopVersion === '0.6.0' && a.kind === 'main' && a.connected && a.phase === 'idle' && a.messages.length === 0, 'idle sole main');
     check(a.extensionStatus.status === 'loaded' && a.activeTools.includes('subagent') && a.activeTools.includes('subagent_supervisor'), 'bundled extension tools');
     check(!location.hash && document.querySelectorAll('[data-subagent-index]').length === 0, 'no startup drafts or visible auth fragment');
     check(!$('#auto-size, [aria-label="Zoom to working size"]'), 'no separate auto-size controls');

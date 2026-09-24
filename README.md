@@ -2,11 +2,11 @@
 
 A dusty-pink, dithered workspace for your **installed native Pi**: pixel typography, overlapping windows, and live multi-agent observers. A native macOS app, with the existing web and terminal interfaces preserved. No core Pi fork.
 
-## macOS application — v0.5.0
+## macOS application — v0.6.0
 
-Download **`Pi-Dither-0.5.0-macOS-arm64.zip`** from [Releases](https://github.com/JoeyZhuoer/pi-dither/releases), unzip it, and drag **`Pi Dither.app`** to Applications. Double-click to launch a native window—**no Terminal or external browser**. The app runs your installed Pi and the Node runtime that ships with it exclusively; Pi, Node and pi-subagents are not bundled, and your normal Pi profile provides packages.
+Download **`Pi-Dither-0.6.0-macOS-arm64.zip`** from [Releases](https://github.com/JoeyZhuoer/pi-dither/releases), unzip it, and drag **`Pi Dither.app`** to Applications. Double-click to launch a native window—**no Terminal or external browser**. The app runs your installed Pi and the Node runtime that ships with it exclusively; Pi, Node and pi-subagents are not bundled, and your normal Pi profile provides packages.
 
-**What's new in 0.5.0:** native-Pi-only runtime (a core Pi installation is required; no bundled runtime) with sessions shared with the `pi` CLI, and live laptop motion — the point cloud leans, lags and bursts from the Mac's built-in accelerometer and gyroscope.
+**What's new in 0.6.0:** the desktop **Widgets** manager replaces the old window **Arrange** control — draggable, resizable standard cells for a 2×1 clock, a 2×2/2×3 usage widget with a per-user-turn token chart, and a 2×2 Provider/Model/Reasoning control that applies changes immediately. Window layouts stay exactly where you put them; the main conversation keeps the full history with Cmd/Ctrl+F search, and every window kind now shares the 360×320 floor.
 
 - **Apple Silicon, macOS 14+**. This build is **ad-hoc signed, not Developer-ID signed/notarized**; downloaded copies may require approval in macOS Privacy & Security. Do not disable Gatekeeper globally.
 - Starts in your home directory. Select a project through **Windows → Workspace** before giving coding instructions, and pick the theme/desk colors or a photo point cloud through **Windows → Appearance** (or add windows back through the **⚙** settings button). Configure a provider through **Providers**, or use existing credentials from your normal `~/.pi/agent` profile. The archive contains no credentials; provider usage can incur charges.
@@ -97,7 +97,7 @@ The terminal owns its font and overall background. Theme styling and metadata ar
 
 ## Validation
 
-The 0.5.0 release passed **147/147** Node/real-DOM tests, browser/WKWebView regressions, four terminal scenarios and rebuilt direct/Finder app launches, including live accelerometer and gyroscope samples on this machine. Native-Pi-only runtime, global session storage, laptop motion, automatic purpose-specific sizing, selective one-shot layout reset, package discovery for main, native Reload and bundle/source parity are covered. See [validation](docs/validation.md) and [the feature-by-feature audit](docs/native-feature-audit.md) for coverage and limitations.
+The 0.6.0 release passed **178/178** Node/real-DOM tests, browser/WKWebView regressions, four terminal scenarios and rebuilt direct/Finder app launches, including live accelerometer and gyroscope samples on this machine. The widget system, full-history search, native-Pi-only runtime, global session storage, laptop motion, automatic purpose-specific sizing, selective one-shot layout reset, package discovery for main, native Reload and bundle/source parity are covered. See [validation](docs/validation.md) and [the feature-by-feature audit](docs/native-feature-audit.md) for coverage and limitations.
 
 ```bash
 npm test

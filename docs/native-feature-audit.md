@@ -1,6 +1,6 @@
 # Native window sizing and feature audit
 
-Status: **validated, installed and opened; released as v0.5.0**. The laptop-motion lane described below is installed and released: the app reads the Apple SPU accelerometer and gyroscope unprivileged on this machine, and the earlier "withheld sensor" finding was corrected (driver reporting was never enabled). Core Pi 0.85.1/0.87.1, pi-subagents 0.69.0 and terminal behavior remain unchanged. The app requires an installed native Pi runtime and Node engine (no bundled fallback, no version whitelist) and stores sessions in `~/.pi/agent/sessions` (see [validation](validation.md)); the earlier local inspection/dropdown changes are included in this build.
+Status: **validated, installed and opened; released as v0.6.0** (the native-only runtime and IMU lane shipped in v0.5.0). The laptop-motion lane described below is installed and released: the app reads the Apple SPU accelerometer and gyroscope unprivileged on this machine, and the earlier "withheld sensor" finding was corrected (driver reporting was never enabled). Core Pi 0.85.1/0.87.1, pi-subagents 0.69.0 and terminal behavior remain unchanged. The app requires an installed native Pi runtime and Node engine (no bundled fallback, no version whitelist) and stores sessions in `~/.pi/agent/sessions` (see [validation](validation.md)); the widget system and the earlier local inspection/dropdown changes are included in this build.
 
 ## Findings and fixes
 

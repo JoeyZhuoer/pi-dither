@@ -53,7 +53,7 @@ To validate a development build without overwriting existing `dist/` artifacts, 
 Outputs in ignored `dist/`:
 
 - `Pi Dither.app`
-- `Pi-Dither-0.5.0-macOS-arm64.zip`
+- `Pi-Dither-0.6.0-macOS-arm64.zip`
 - `SHA256SUMS.txt`
 
 The packager copies only allowlisted application source. It does not bundle Node, Pi, pi-subagents, the entire checkout, user profiles or credentials; Node, Pi and all packages are loaded from the user's native installation and profile at runtime. `Contents/Resources/runtime-inventory.json` records the application/platform and `THIRD-PARTY-NOTICES.txt` points to notices. Native binaries and the outer app are ad-hoc signed, verified and archived. Source remains plain JavaScript plus Swift; no Electron, React, frontend bundler or network-hosted assets.
