@@ -29,11 +29,11 @@ export async function checkWindowsDOM({ DesktopWindows }) {
     const observer = engine.add({ id: 'observer', kind: 'delegated', title: 'Observer' });
     assert(child.sizeMode === 'auto' && observer.sizeMode === 'auto', 'children and observers fit on creation');
     assert(main.rect.w === 610 && observer.rect.w === 400 && child.rect.w === 360, 'opening widths stay purpose-specific: main 610, observer 400, child 360');
-    // Every kind bottoms out at the main 360x320 floor.
+    // Every kind bottoms out at the shared 270x250 floor.
     engine.place(child, { x: 40, y: 120, w: 120, h: 90 });
-    assert(child.rect.w === 360 && child.rect.h === 320, 'manual children share the main floor');
+    assert(child.rect.w === 270 && child.rect.h === 250, 'manual children share the main floor');
     engine.place(observer, { x: 600, y: 120, w: 120, h: 90 });
-    assert(observer.rect.w === 360 && observer.rect.h === 320, 'delegated observers share the main floor');
+    assert(observer.rect.w === 270 && observer.rect.h === 250, 'delegated observers share the main floor');
     const dimensions = new Set();
     for (const id of ['models', 'providers', 'workspace', 'git', 'usage', 'sessions', 'activity', 'tools', 'background']) {
       const win = engine.add({ id, kind: 'utility', title: id, hidden: true });
@@ -66,12 +66,12 @@ export async function checkWindowsDOM({ DesktopWindows }) {
     maximize.click(); maximize.click(); assert(main.sizeMode === 'auto' && main.rect.w === beforeMax, 'maximize/restore preserves automatic intent');
     engine.place(engine.windows.get('tools'), { x: 60, y: 200, w: 100, h: 90 });
     const tools = engine.windows.get('tools').rect;
-    assert(tools.w === 360 && tools.h === 320, 'utilities share the main floor');
+    assert(tools.w === 270 && tools.h === 250, 'utilities share the main floor');
     engine.place(main, { x: 20, y: 20, w: 380, h: 340 });
     assert(main.rect.w === 380 && main.rect.h === 340, 'main shrinks below the old 610x440 floor');
     engine.place(main, { x: 20, y: 20, w: 100, h: 100 });
-    assert(main.rect.w === 360 && main.rect.h === 320, 'main floor is 360x320');
-    return 'roomy opening with a shared 360x320 floor, purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation and maximize passed';
+    assert(main.rect.w === 270 && main.rect.h === 320, 'main floor is 270x320');
+    return 'roomy opening with a 270px column floor (main 320 high), purpose-specific compact presets, native/container resize recovery, manual/hidden/focus preservation and maximize passed';
   } finally {
     engine.destroy(); desktop.remove(); tasks.remove();
     if (saved === null) localStorage.removeItem(key); else localStorage.setItem(key, saved);

@@ -24,8 +24,10 @@ const profileFor = (kind, id) => kind === 'delegated' ? [560, 430]
   : kind === 'utility' ? (Object.hasOwn(profiles, id) ? profiles[id] : [820, 660]) : null;
 // Minimum usable width/height, shared by opening geometry and viewport
 // clamping so they cannot drift apart. Every kind can be dragged down to the
-// same narrow column as main; children alone keep the main-relative cap.
-const minimum = () => ({ w: 360, h: 320 });
+// same 270px column; the main window keeps a 320px height so its composer stays
+// reachable, while the other kinds shrink to 250px. Children alone keep the
+// main-relative cap.
+const minimum = (kind) => kind === 'main' ? { w: 270, h: 320 } : { w: 270, h: 250 };
 // Opening stays roomier than the floor so shrinking is always the user's
 // choice: main 610, manual children at the floor, observers/utilities 400.
 const openingWidth = (kind) => kind === 'main' ? 610 : kind === 'subagent' ? 360 : 400;
@@ -292,7 +294,7 @@ export class DesktopWindows {
   }
   workingRect(win) {
     const w = this.desktop.clientWidth, h = this.desktop.clientHeight;
-    const limits = minimum();
+    const limits = minimum(win.kind);
     // Open at the minimum usable width with a medium height. Manual resizing
     // replaces these values for that window and keeps them (sizeMode manual).
     const target = { w: Math.min(openingWidth(win.kind), Math.max(1, w - 8)), h: Math.max(limits.h, Math.round(h * MEDIUM_HEIGHT)) };
@@ -327,7 +329,7 @@ export class DesktopWindows {
     const maxW = small ? Math.max(1, Math.min(460, (main?.rect.w ?? 800) - 140, areaW - 8)) : areaW - 8;
     const maxH = small ? Math.max(1, Math.min(510, (main?.rect.h ?? 680) - 100, areaH - 8)) : areaH - 8;
     const defaults = this.defaultRect(win.kind, win.index, win.id);
-    const limits = minimum();
+    const limits = minimum(win.kind);
     const rect = Object.fromEntries(rectKeys.map((key) => [key, Number.isFinite(requested?.[key]) ? requested[key] : defaults[key]]));
     const w = clamp(rect.w, Math.min(limits.w, maxW), maxW);
     const h = clamp(rect.h, Math.min(limits.h, maxH), maxH);

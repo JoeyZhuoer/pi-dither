@@ -102,3 +102,21 @@ test('local API enforces auth, static allowlist, request deduplication and expli
     assert.equal((await fetch(`${base}/api/agents/main/close`, { method: 'POST', headers, body: JSON.stringify({ requestId: randomUUID() }) })).status, 400);
   } finally { await app.close(); }
 });
+
+test('projected assistant messages keep normalized per-turn usage for the usage chart', () => {
+  const state = createAgentState('main', 'Main', 'main'), reducer = new AgentReducer(state);
+  reducer.apply({ type: 'message_start', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } });
+  reducer.apply({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], usage: { input: 10, output: 20, cacheRead: 1, cacheWrite: 2, totalTokens: 33, cost: { total: 0.5 } } } });
+  assert.deepEqual(state.messages[0].usage, { input: 10, output: 20, cacheRead: 1, cacheWrite: 2, totalTokens: 33 });
+  // A hydrated session keeps the same usage so the chart can rebuild on resume.
+  const second = createAgentState('main', 'Main', 'main'), hydrated = new AgentReducer(second);
+  hydrated.hydrate([
+    { role: 'user', content: 'q', timestamp: 1 },
+    { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 1, output: null, totalTokens: 1 }, timestamp: 2 },
+  ]);
+  assert.deepEqual(second.messages.find((message) => message.role === 'assistant').usage, { input: 1, output: null, cacheRead: null, cacheWrite: null, totalTokens: 1 });
+  // Usage with no numbers is not attached, so no fabricated point appears.
+  reducer.apply({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  reducer.apply({ type: 'message_end', message: { role: 'assistant', content: [], usage: { cost: { total: 1 } } } });
+  assert.equal(state.messages.at(-1).usage, undefined);
+});

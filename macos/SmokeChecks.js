@@ -317,11 +317,12 @@ async function piDitherSmoke(stage) {
     check(rect.right <= area.right + 1 && rect.bottom <= area.bottom + 1, 'minimum native viewport keeps main inside desktop');
     check($('.desktop-menu').scrollWidth <= $('.desktop-menu').clientWidth, 'minimum native toolbar fits');
     check(main.querySelector('.send').getBoundingClientRect().bottom <= rect.bottom + 1, 'minimum native composer remains reachable');
-    check(parseFloat($('[data-window-id="models"]').style.height) === 320, 'hidden utility clamps to its minimum height at the smallest viewport');
+    const utilityMin = parseFloat($('[data-window-id="models"]').style.height);
+    check(utilityMin >= 250, 'hidden utility respects its 250px minimum at the smallest viewport');
+    window.nativeFeatureState.utilityMin = utilityMin;
   } else if (stage === 'narrow') {
-    // The smallest viewport clamps every window to its minimum height, so the
-    // next size up must grow the hidden utility again without changing width.
-    await wait(() => parseFloat($('[data-window-id="models"]').style.height) > 320);
+    // Growing the viewport must grow the hidden utility again without reopening it.
+    await wait(() => parseFloat($('[data-window-id="models"]').style.height) > (nativeFeatureState.utilityMin ?? 250));
     check(saved().main.sizeMode === 'auto' && width() === nativeFeatureState.wide, 'native narrow resize retains minimum width and auto intent');
     check($('[data-window-id="models"]').hidden, 'native resize does not reopen hidden windows');
   } else if (stage === 'wide') {
@@ -334,11 +335,11 @@ async function piDitherSmoke(stage) {
     // The shared narrower floor lets the user shrink main well below the old 610px.
     for (let i = 0; i < 20; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     const narrowMain = parseFloat(main.style.width);
-    check(narrowMain <= 410 && narrowMain >= 360, `main shrinks below the old floor (${narrowMain}px)`);
+    check(narrowMain <= 410 && narrowMain >= 270, `main shrinks below the old floor (${narrowMain}px)`);
     check(main.querySelector('.send').getBoundingClientRect().bottom <= main.getBoundingClientRect().bottom + 1, 'narrow main keeps its composer reachable');
-    // Every kind now shares main's floor, so ten more lefts stop at 360px.
-    for (let i = 0; i < 10; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-    check(parseFloat(main.style.width) === 360, `main stops at the shared 360px floor (${main.style.width})`);
+    // Every kind now shares main's 270px floor, so more lefts stop at 270px.
+    for (let i = 0; i < 20; i++) main.querySelector('.resize-handle').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    check(parseFloat(main.style.width) === 270, `main stops at the shared 270px floor (${main.style.width})`);
     nativeFeatureState.manual = saved().main.w;
   } else if (stage === 'manual-narrow') {
     await wait(() => innerWidth < 1000);

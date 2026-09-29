@@ -12,6 +12,15 @@ export const safeModel = (model) => model ? {
   reasoning: !!model.reasoning, contextWindow: model.contextWindow,
 } : null;
 
+const finiteNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : null;
+// Per-assistant-message token usage, kept on the projected transcript so the
+// usage widget can rebuild its per-turn chart after a session resume.
+export const messageUsage = (usage) => {
+  if (!usage || typeof usage !== 'object') return null;
+  const normalized = { input: finiteNumber(usage.input), output: finiteNumber(usage.output), cacheRead: finiteNumber(usage.cacheRead), cacheWrite: finiteNumber(usage.cacheWrite), totalTokens: finiteNumber(usage.totalTokens) };
+  return Object.values(normalized).some((value) => value !== null) ? normalized : null;
+};
+
 // RPC is strictly LF-delimited JSON, not Unicode-line-delimited text.
 export class JsonLines {
   buffer = '';
@@ -181,6 +190,8 @@ export class AgentReducer {
         target.text = clip(contentText(message.content));
         target.thinking = clip((message.content ?? []).filter((b) => b.type === 'thinking').map((b) => b.thinking).join('\n'));
         target.status = message.stopReason === 'aborted' ? 'cancelled' : message.stopReason === 'error' ? 'error' : 'done';
+        const usage = messageUsage(message.usage);
+        if (usage) target.usage = usage;
         if (message.errorMessage) { target.text ||= clip(message.errorMessage); state.error = clip(message.errorMessage); }
         this.assistant = null; this.blocks = []; break;
       }

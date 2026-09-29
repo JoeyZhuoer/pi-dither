@@ -22,7 +22,7 @@ export function createUsageChart() {
   element.style.display = 'none'; element.style.width = '100%';
   element.style.height = `${CHART_HEIGHT}px`; element.style.marginTop = '4px';
   const history = [];
-  let agentId = null, initialized = false, lastTotal = null, lastTurn = 0, pending = false;
+  let agentId = null;
 
   function draw() {
     const context = element.getContext?.('2d');
@@ -55,34 +55,32 @@ export function createUsageChart() {
     });
   }
 
+  // One point per user input, derived from the transcript: assistant usage
+  // between two user messages is that turn's token total. A hydrated session
+  // rebuilds the full chart after resume; no timers or wall-clock sampling.
+  function historyOf(agent) {
+    const messages = Array.isArray(agent?.messages) ? agent.messages : [];
+    const turns = [];
+    for (const message of messages) {
+      if (message?.role === 'user') { turns.push({ turn: turns.length + 1, tokens: 0, known: false }); continue; }
+      if (message?.role !== 'assistant' || !turns.length) continue;
+      const usage = message.usage;
+      if (!usage) continue;
+      const total = Number.isFinite(usage.totalTokens) ? usage.totalTokens
+        : [usage.input, usage.output, usage.cacheRead, usage.cacheWrite].reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+      const last = turns[turns.length - 1];
+      last.tokens += total; last.known = true;
+    }
+    return turns.map(({ turn, tokens, known }) => ({ turn, tokens: known ? tokens : null }));
+  }
+
   return {
     element, history,
     update(agent, size) {
       const id = agent?.id || '';
-      if (id !== agentId) { agentId = id; history.length = 0; initialized = false; lastTotal = null; lastTurn = 0; pending = false; }
-      const stats = agent?.stats || null;
-      const total = Number.isFinite(stats?.tokens?.total) ? stats.tokens.total : null;
-      const turns = Number.isFinite(stats?.userMessages) ? stats.userMessages : null;
-      const running = !!agent?.phase && !['idle', 'stopped', 'error'].includes(agent.phase);
-      if (!initialized && stats) {
-        initialized = true;
-        lastTotal = total;
-        if (running && turns !== null) { lastTurn = Math.max(0, turns - 1); pending = true; }
-        else lastTurn = turns ?? 0;
-      } else if (initialized) {
-        if (turns !== null && turns > lastTurn) pending = true;
-        // A point is recorded only after the output ends, and its value is this
-        // turn's usage: the delta from the previous completed turn's total.
-        if (pending && !running) {
-          const turn = turns ?? lastTurn + 1;
-          const tokens = total === null || lastTotal === null ? null : Math.max(0, total - lastTotal);
-          history.push({ turn, tokens });
-          if (history.length > MAX_SAMPLES) history.shift();
-          if (total !== null) lastTotal = total;
-          lastTurn = Math.max(lastTurn, turn);
-          pending = false;
-        }
-      }
+      if (id !== agentId) { agentId = id; history.length = 0; }
+      const next = historyOf(agent).slice(-MAX_SAMPLES);
+      if (JSON.stringify(next) !== JSON.stringify(history)) { history.length = 0; history.push(...next); }
       const large = (size?.h ?? 0) >= 3;
       element.style.display = large ? 'block' : 'none';
       if (large) {

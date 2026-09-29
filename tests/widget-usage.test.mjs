@@ -114,36 +114,36 @@ test('the token chart shows only at 2x3 and follows ctx.size changes', (t) => {
   assert.equal(chart().style.display, 'none', 'the chart hides again after a resize back to 2x2');
 });
 
-test('the token chart records one point per completed user turn, leaves gaps and resets per agent', (t) => {
+test('the token chart derives one point per user input from the transcript and rebuilds on resume', (t) => {
   const previous = globalThis.document;
   globalThis.document = { createElement: (tag) => new Element(tag) };
   t.after(() => { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; });
   const chart = createUsageChart();
-  // No completed turn yet: the baseline is adopted without a fabricated point.
-  chart.update(agent({ stats: { userMessages: 0, tokens: { total: 0 } } }), { w: 2, h: 3 });
-  assert.equal(chart.history.length, 0, 'an idle baseline records no turn');
-  // Turn 1: running, then idle with the reported cumulative total.
-  chart.update(agent({ phase: 'running', stats: { userMessages: 1, tokens: { total: 0 } } }), { w: 2, h: 3 });
-  assert.equal(chart.history.length, 0, 'a running turn is not charted yet');
-  chart.update(agent({ phase: 'idle', stats: { userMessages: 1, tokens: { total: 350 } } }), { w: 2, h: 3 });
-  assert.deepEqual(chart.history, [{ turn: 1, tokens: 350 }], 'turn 1 records its own token usage');
-  // Turn 2 stores the delta, not the cumulative session total.
-  chart.update(agent({ phase: 'running', stats: { userMessages: 2, tokens: { total: 350 } } }), { w: 2, h: 3 });
-  chart.update(agent({ phase: 'idle', stats: { userMessages: 2, tokens: { total: 500 } } }), { w: 2, h: 3 });
-  assert.deepEqual(chart.history[1], { turn: 2, tokens: 150 }, 'turn 2 stores the turn delta');
-  // Unknown totals keep the turn as a gap instead of fabricating a value.
-  chart.update(agent({ phase: 'running', stats: { userMessages: 3, tokens: null } }), { w: 2, h: 3 });
-  chart.update(agent({ phase: 'idle', stats: { userMessages: 3, tokens: null } }), { w: 2, h: 3 });
-  assert.deepEqual(chart.history[2], { turn: 3, tokens: null }, 'an unknown turn total leaves a gap');
+  const withMessages = (messages, overrides = {}) => agent({ messages, ...overrides });
+  const firstTurn = [{ role: 'user' }, { role: 'assistant', usage: { totalTokens: 350 } }];
+  chart.update(withMessages(firstTurn), { w: 2, h: 3 });
+  assert.deepEqual(chart.history, [{ turn: 1, tokens: 350 }], 'a completed turn is one point');
+  // A new user input adds its point immediately, before any output exists.
+  const runningTurn = [...firstTurn, { role: 'user' }];
+  chart.update(withMessages(runningTurn), { w: 2, h: 3 });
+  assert.deepEqual(chart.history[1], { turn: 2, tokens: null }, 'a new input adds a point immediately');
+  // The output end fills that point with the turn total (summed over its assistants).
+  const secondTurn = [...runningTurn, { role: 'assistant', usage: { input: 10, output: 90, cacheRead: 0, cacheWrite: 0 } }];
+  chart.update(withMessages(secondTurn), { w: 2, h: 3 });
+  assert.equal(chart.history[1].tokens, 100, 'the output end fills the turn total');
+  // A resumed session has no live events: the same transcript rebuilds the chart.
+  const resumed = createUsageChart();
+  resumed.update(withMessages(secondTurn), { w: 2, h: 3 });
+  assert.deepEqual(resumed.history, chart.history, 'a resumed session rebuilds the same chart');
   // Changing the selected agent resets the history.
-  chart.update(agent({ id: 'child', phase: 'idle', stats: { userMessages: 1, tokens: { total: 10 } } }), { w: 2, h: 3 });
-  assert.equal(chart.history.length, 0, 'changing the selected agent resets the history');
-  // The history is capped at 40 completed turns.
-  for (let i = 1; i <= 60; i++) {
-    chart.update(agent({ phase: 'running', stats: { userMessages: i, tokens: { total: i * 10 } } }), { w: 2, h: 3 });
-    chart.update(agent({ phase: 'idle', stats: { userMessages: i, tokens: { total: i * 10 } } }), { w: 2, h: 3 });
-  }
+  chart.update(withMessages([{ role: 'user' }, { role: 'assistant', usage: { totalTokens: 5 } }], { id: 'child' }), { w: 2, h: 3 });
+  assert.deepEqual(chart.history, [{ turn: 1, tokens: 5 }], 'changing the selected agent resets the history');
+  // The history is capped at the last 40 turns.
+  const many = [];
+  for (let i = 1; i <= 60; i++) { many.push({ role: 'user' }, { role: 'assistant', usage: { totalTokens: i } }); }
+  chart.update(withMessages(many), { w: 2, h: 3 });
   assert.equal(chart.history.length, 40, 'the history is capped at 40 turns');
+  assert.deepEqual(chart.history.at(-1), { turn: 60, tokens: 60 }, 'the newest turn is kept');
 });
 
 test('update falls back to the main agent when the host offers no selection', (t) => {
